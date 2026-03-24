@@ -132,7 +132,11 @@ public final class DisguiseService {
             return true;
         }
         long now = System.currentTimeMillis();
-        Long prev = lastActionByInitiator.put(initiator, now);
-        return prev == null || now - prev >= limit;
+        Long prev = lastActionByInitiator.get(initiator);
+        if (prev != null && now - prev < limit) {
+            return false;
+        }
+        lastActionByInitiator.put(initiator, now);
+        return true;
     }
 }
