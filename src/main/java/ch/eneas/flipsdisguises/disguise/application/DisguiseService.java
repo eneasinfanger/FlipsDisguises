@@ -2,11 +2,12 @@ package ch.eneas.flipsdisguises.disguise.application;
 
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
-import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerLookBackup;
 import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
 import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
 import ch.eneas.flipsdisguises.edition.ProductEdition;
+import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.CommandSender;
@@ -28,7 +29,7 @@ public final class DisguiseService {
     private final SkinCatalog skins;
     private final PlayerAppearancePort appearance;
     private final ProductEdition edition;
-    private final Map<UUID, SkinSnapshot> originalsByPlayer = new ConcurrentHashMap<>();
+    private final Map<UUID, PlayerLookBackup> originalsByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastActionByInitiator = new ConcurrentHashMap<>();
 
     @Inject
@@ -56,11 +57,11 @@ public final class DisguiseService {
         if (!edition.disguiseCommandsEnabled() && !edition.programmaticDisguiseApiEnabled()) {
             return DisguiseResult.failure(Component.text("Disguises are disabled.", NamedTextColor.RED));
         }
-        SkinSnapshot original = originalsByPlayer.remove(target.getUniqueId());
+        PlayerLookBackup original = originalsByPlayer.remove(target.getUniqueId());
         if (original == null) {
             return DisguiseResult.failure(Component.text("Nothing to restore.", NamedTextColor.GRAY));
         }
-        appearance.applySkin(target, original);
+        appearance.restore(target, original);
         LOG.info("business.disguise_cleared player={}", target.getUniqueId());
         return DisguiseResult.ok();
     }
@@ -79,12 +80,12 @@ public final class DisguiseService {
         String owner = skinOwner.trim();
         if (owner.isEmpty()) {
             return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Skin name required.", NamedTextColor.RED))
+                DisguiseResult.failure(Component.text("Player name required.", NamedTextColor.RED))
             );
         }
-        return skins.resolveUsername(owner).thenCompose(skin -> scheduleApply(target, skin)).exceptionally(ex -> {
+        return skins.resolveUsername(owner).thenCompose(skin -> scheduleApply(target, skin, owner)).exceptionally(ex -> {
             LOG.error("business.disguise_resolve_failed target={} skinOwner={}", target.getUniqueId(), owner, ex);
-            return DisguiseResult.failure(Component.text("Could not resolve skin.", NamedTextColor.RED));
+            return DisguiseResult.failure(Component.text("Could not resolve that player.", NamedTextColor.RED));
         });
     }
 
@@ -97,16 +98,16 @@ public final class DisguiseService {
         String owner = skinOwner.trim();
         if (owner.isEmpty()) {
             return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Skin name required.", NamedTextColor.RED))
+                DisguiseResult.failure(Component.text("Player name required.", NamedTextColor.RED))
             );
         }
-        return skins.resolveUsername(owner).thenCompose(skin -> scheduleApply(target, skin)).exceptionally(ex -> {
+        return skins.resolveUsername(owner).thenCompose(skin -> scheduleApply(target, skin, owner)).exceptionally(ex -> {
             LOG.error("business.disguise_resolve_failed_api target={} skinOwner={}", target.getUniqueId(), owner, ex);
-            return DisguiseResult.failure(Component.text("Could not resolve skin.", NamedTextColor.RED));
+            return DisguiseResult.failure(Component.text("Could not resolve that player.", NamedTextColor.RED));
         });
     }
 
-    private CompletableFuture<DisguiseResult> scheduleApply(Player target, SkinSnapshot skin) {
+    private CompletableFuture<DisguiseResult> scheduleApply(Player target, SkinSnapshot skin, String requestedName) {
         CompletableFuture<DisguiseResult> done = new CompletableFuture<>();
         syncTasks.runSync(() -> {
             try {
@@ -114,9 +115,15 @@ public final class DisguiseService {
                     done.complete(DisguiseResult.failure(Component.text("Target went offline.", NamedTextColor.RED)));
                     return;
                 }
+                String shown = skin.displayName().isBlank() ? requestedName.trim() : skin.displayName();
                 originalsByPlayer.putIfAbsent(target.getUniqueId(), appearance.capture(target));
-                appearance.applySkin(target, skin);
-                LOG.info("business.disguise_applied player={} skinProfile={}", target.getUniqueId(), skin.playerId());
+                appearance.applyImpersonation(target, skin, shown);
+                LOG.info(
+                    "business.disguise_applied player={} asProfile={} shownName={}",
+                    target.getUniqueId(),
+                    skin.playerId(),
+                    shown
+                );
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
                 LOG.error("business.disguise_apply_failed player={}", target.getUniqueId(), ex);

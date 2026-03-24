@@ -38,19 +38,32 @@ public final class DisguiseCommands implements CommandRegister {
 
     private CommandAPICommand buildDisguiseCommand() {
         return new CommandAPICommand("disguise")
+            .withSubcommand(new CommandAPICommand("as")
+                .withPermission("flipsdisguises.disguise.player")
+                .withArguments(new StringArgument("playerName"))
+                .executes((CommandSender sender, CommandArguments args) -> {
+                    if (!(sender instanceof Player player)) {
+                        sender.sendMessage(Component.text("Only players can use /disguise as.", NamedTextColor.RED));
+                        return;
+                    }
+                    String name = (String) args.getUnchecked("playerName");
+                    disguiseService.disguiseAsNamedPlayer(player, player, name).thenAccept(result ->
+                        plugin.getServer().getScheduler().runTask(plugin, () -> reply(player, result)));
+                }))
             .withSubcommand(new CommandAPICommand("player")
                 .withPermission("flipsdisguises.disguise.player")
-                .withArguments(new EntitySelectorArgument.OnePlayer("target"), new StringArgument("skin"))
+                .withArguments(new EntitySelectorArgument.OnePlayer("target"), new StringArgument("playerName"))
                 .executes((CommandSender sender, CommandArguments args) -> {
                     Player target = (Player) args.getUnchecked("target");
-                    String skin = (String) args.getUnchecked("skin");
+                    String skin = (String) args.getUnchecked("playerName");
                     disguiseService.disguiseAsNamedPlayer(sender, target, skin).thenAccept(result ->
                         plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
                 }))
             .executes((CommandSender sender, CommandArguments args) ->
-                sender.sendMessage(
-                    Component.text("Usage: /disguise player <target> <skinName>", NamedTextColor.YELLOW)
-                ));
+                sender.sendMessage(Component.text(
+                    "Usage: /disguise as <playerName>  or  /disguise player <target> <playerName>",
+                    NamedTextColor.YELLOW
+                )));
     }
 
     private CommandAPICommand buildUndisguiseCommand() {
@@ -75,7 +88,7 @@ public final class DisguiseCommands implements CommandRegister {
         if (result instanceof DisguiseResult.Failure f) {
             sender.sendMessage(f.message());
         } else {
-            sender.sendMessage(Component.text("Done.", NamedTextColor.GREEN));
+            sender.sendMessage(Component.text("Disguise applied.", NamedTextColor.GREEN));
         }
     }
 }
