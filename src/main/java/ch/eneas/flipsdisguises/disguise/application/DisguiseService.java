@@ -62,7 +62,7 @@ public final class DisguiseService {
             return DisguiseResult.failure(Component.text("Nothing to restore.", NamedTextColor.GRAY));
         }
         appearance.restore(target, original);
-        LOG.info("business.disguise_cleared player={}", target.getUniqueId());
+        LOG.info("Disguise removed for {}", target.getUniqueId());
         return DisguiseResult.ok();
     }
 
@@ -84,7 +84,7 @@ public final class DisguiseService {
             );
         }
         return skins.resolveUsername(owner).thenCompose(skin -> scheduleApply(target, skin, owner)).exceptionally(ex -> {
-            LOG.error("business.disguise_resolve_failed target={} skinOwner={}", target.getUniqueId(), owner, ex);
+            LOG.error("Failed to resolve skin profile '{}' for {}", owner, target.getUniqueId(), ex);
             return DisguiseResult.failure(Component.text("Could not resolve that player.", NamedTextColor.RED));
         });
     }
@@ -102,7 +102,7 @@ public final class DisguiseService {
             );
         }
         return skins.resolveUsername(owner).thenCompose(skin -> scheduleApply(target, skin, owner)).exceptionally(ex -> {
-            LOG.error("business.disguise_resolve_failed_api target={} skinOwner={}", target.getUniqueId(), owner, ex);
+            LOG.error("Failed to resolve skin profile '{}' for {}", owner, target.getUniqueId(), ex);
             return DisguiseResult.failure(Component.text("Could not resolve that player.", NamedTextColor.RED));
         });
     }
@@ -115,18 +115,18 @@ public final class DisguiseService {
                     done.complete(DisguiseResult.failure(Component.text("Target went offline.", NamedTextColor.RED)));
                     return;
                 }
-                String shown = skin.displayName().isBlank() ? requestedName.trim() : skin.displayName();
+                String shown = skin.getDisplayName().isBlank() ? requestedName.trim() : skin.getDisplayName();
                 originalsByPlayer.putIfAbsent(target.getUniqueId(), appearance.capture(target));
                 appearance.applyImpersonation(target, skin, shown);
                 LOG.info(
-                    "business.disguise_applied player={} asProfile={} shownName={}",
+                    "Applied disguise for {} as '{}' ({})",
                     target.getUniqueId(),
-                    skin.playerId(),
-                    shown
+                    shown,
+                    skin.getPlayerId()
                 );
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
-                LOG.error("business.disguise_apply_failed player={}", target.getUniqueId(), ex);
+                LOG.error("Failed applying disguise for {}", target.getUniqueId(), ex);
                 done.complete(DisguiseResult.failure(Component.text("Could not apply disguise.", NamedTextColor.RED)));
             }
         });

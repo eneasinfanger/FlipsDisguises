@@ -1,5 +1,7 @@
 package ch.eneas.flipsdisguises.disguise.adapter.paper;
 
+import ch.eneas.Main;
+import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.SkinProperty;
 import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
@@ -7,8 +9,7 @@ import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
 import com.destroystokyo.paper.profile.PlayerProfile;
 import com.github.benmanes.caffeine.cache.AsyncLoadingCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import org.bukkit.Bukkit;
-import org.bukkit.OfflinePlayer;
+import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,21 +20,33 @@ import java.util.concurrent.TimeUnit;
 @Injectable
 public final class PaperSkinCatalog implements SkinCatalog {
 
-    private final AsyncLoadingCache<String, SkinSnapshot> cache = Caffeine.newBuilder()
-        .maximumSize(512)
-        .expireAfterAccess(30, TimeUnit.MINUTES)
-        .buildAsync((String key, java.util.concurrent.Executor executor) -> load(key));
+    private final Main plugin;
+    private final AsyncLoadingCache<String, SkinSnapshot> cache;
 
-    private static CompletableFuture<SkinSnapshot> load(String username) {
-        OfflinePlayer off = Bukkit.getOfflinePlayer(username);
-        PlayerProfile profile = (PlayerProfile) Bukkit.createPlayerProfile(off.getUniqueId(), username);
-        return profile.update().thenApply(PaperSkinCatalog::toSnapshot);
+    @Inject
+    public PaperSkinCatalog(Main plugin) {
+        this.plugin = plugin;
+        this.cache = Caffeine.newBuilder()
+            .maximumSize(512)
+            .expireAfterAccess(30, TimeUnit.MINUTES)
+            .buildAsync((String key, java.util.concurrent.Executor executor) -> load(key));
+    }
+
+    private CompletableFuture<SkinSnapshot> load(String username) {
+        Player online = plugin.getServer().getPlayerExact(username);
+        if (online != null) {
+            return CompletableFuture.completedFuture(toSnapshot(online.getPlayerProfile()));
+        }
+        PlayerProfile profile = plugin.getServer().createProfile(username);
+        return CompletableFuture.supplyAsync(() -> {
+            profile.complete(true);
+            return toSnapshot(profile);
+        });
     }
 
     static SkinSnapshot toSnapshot(PlayerProfile profile) {
         List<SkinProperty> props = new ArrayList<>();
-        profile.getProperties().forEach(prop -> props.add(new SkinProperty(prop.getName(), prop.getValue(),
-            prop.getSignature() == null ? "" : prop.getSignature())));
+        profile.getProperties().forEach(prop -> props.add(new SkinProperty(prop.getName(), prop.getValue(), prop.getSignature())));
         String display = profile.getName() == null ? "" : profile.getName();
         return new SkinSnapshot(profile.getId(), display, props);
     }

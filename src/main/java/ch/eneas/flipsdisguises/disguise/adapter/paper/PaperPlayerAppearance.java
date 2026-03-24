@@ -1,5 +1,7 @@
 package ch.eneas.flipsdisguises.disguise.adapter.paper;
 
+import ch.eneas.Main;
+import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.PlayerLookBackup;
 import ch.eneas.flipsdisguises.disguise.domain.SkinProperty;
@@ -9,13 +11,18 @@ import com.destroystokyo.paper.profile.PlayerProfile;
 import com.destroystokyo.paper.profile.ProfileProperty;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
-import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 @Injectable
 public final class PaperPlayerAppearance implements PlayerAppearancePort {
 
     private static final PlainTextComponentSerializer PLAIN = PlainTextComponentSerializer.plainText();
+    private final Main plugin;
+
+    @Inject
+    public PaperPlayerAppearance(Main plugin) {
+        this.plugin = plugin;
+    }
 
     @Override
     public PlayerLookBackup capture(Player player) {
@@ -30,7 +37,7 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
 
     @Override
     public void applyImpersonation(Player player, SkinSnapshot skin, String shownNamePlain) {
-        setProfileFromSnapshot(player, skin);
+        setProfileFromSnapshot(plugin, player, skin);
         Component label = Component.text(shownNamePlain);
         player.displayName(label);
         player.playerListName(label);
@@ -38,28 +45,28 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
 
     @Override
     public void restore(Player player, PlayerLookBackup backup) {
-        setProfileFromSnapshot(player, backup.skin());
+        setProfileFromSnapshot(plugin, player, backup.getSkin());
         String name = player.getName();
-        if (backup.displayPlainOrNull() == null) {
+        if (backup.getDisplayPlainOrNull() == null) {
             player.displayName(Component.text(name));
         } else {
-            player.displayName(Component.text(backup.displayPlainOrNull()));
+            player.displayName(Component.text(backup.getDisplayPlainOrNull()));
         }
-        if (backup.listPlainOrNull() == null) {
+        if (backup.getListPlainOrNull() == null) {
             player.playerListName(Component.text(name));
         } else {
-            player.playerListName(Component.text(backup.listPlainOrNull()));
+            player.playerListName(Component.text(backup.getListPlainOrNull()));
         }
     }
 
-    private static void setProfileFromSnapshot(Player player, SkinSnapshot skin) {
-        PlayerProfile profile = (PlayerProfile) Bukkit.createPlayerProfile(skin.playerId(), skin.displayName());
-        for (SkinProperty p : skin.properties()) {
-            String sig = p.signature() == null || p.signature().isEmpty() ? null : p.signature();
+    private static void setProfileFromSnapshot(Main plugin, Player player, SkinSnapshot skin) {
+        PlayerProfile profile = plugin.getServer().createProfile(skin.getPlayerId(), skin.getDisplayName());
+        for (SkinProperty p : skin.getProperties()) {
+            String sig = p.getSignature() == null || p.getSignature().isEmpty() ? null : p.getSignature();
             if (sig == null) {
-                profile.setProperty(new ProfileProperty(p.name(), p.value()));
+                profile.setProperty(new ProfileProperty(p.getName(), p.getValue()));
             } else {
-                profile.setProperty(new ProfileProperty(p.name(), p.value(), sig));
+                profile.setProperty(new ProfileProperty(p.getName(), p.getValue(), sig));
             }
         }
         player.setPlayerProfile(profile);
