@@ -1,4 +1,16 @@
 name: FlipsDisguises
-version: '1.0-SNAPSHOT'
+version: '${project.version}'
 main: ch.eneas.Main
-api-version: '1.21.10'
+api-version: '1.21'
+description: Player skin disguises with a small programmatic API.
+
+permissions:
+  flipsdisguises.disguise.player:
+    description: Apply a player skin disguise to others.
+    default: op
+  flipsdisguises.undisguise:
+    description: Restore player appearance.
+    default: true
+  flipsdisguises.admin:
+    description: Reload plugin configuration.
+    default: op
