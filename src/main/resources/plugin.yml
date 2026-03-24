@@ -1,0 +1,4 @@
+name: FlipsDisguises
+version: '1.0-SNAPSHOT'
+main: ch.eneas.Main
+api-version: '1.21.10'
