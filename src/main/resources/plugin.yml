@@ -18,6 +18,9 @@ permissions:
   flipsdisguises.disguise.mob:
     description: Rewrite your entity model to a simple mob for other players (packet-based).
     default: op
+  flipsdisguises.disguise.entity:
+    description: Packet-disguise arbitrary non-player living entities as another mob type.
+    default: op
   flipsdisguises.undisguise:
     description: Restore player appearance.
     default: true

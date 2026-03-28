@@ -1,21 +1,27 @@
 package ch.eneas.flipsdisguises.disguise.port;
 
+import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 import java.util.UUID;
 
 public interface MobDisguisePort {
 
-    boolean isMobDisguised(UUID playerId);
+    boolean isMobDisguised(UUID entityUuid);
 
-    void attach(Player subject, EntityType type);
+    default void attach(LivingEntity subject, EntityType type) {
+        attach(subject, type, MobDisguiseOptions.DEFAULT);
+    }
 
-    void detach(Player subject);
+    void attach(LivingEntity subject, EntityType type, MobDisguiseOptions options);
 
-    void detachDecoyOnly(Player subject);
+    void detach(LivingEntity subject);
 
-    void detachDisconnected(UUID subjectId);
+    void detachDecoyOnly(LivingEntity subject);
+
+    void detachDisconnected(UUID entityUuid);
 
     void syncNewObserver(Player observer);
 }

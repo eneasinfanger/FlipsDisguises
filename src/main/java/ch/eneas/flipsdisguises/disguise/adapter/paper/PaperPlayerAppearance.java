@@ -55,10 +55,14 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
 
     @Override
     public void applyMobLabels(Player player, EntityType type) {
-        Component label = Component.text(prettyMobLabel(type));
-        player.displayName(label);
-        player.playerListName(label);
-        player.customName(label);
+        applyMobLabels(player, type, Component.text(prettyMobLabel(type)));
+    }
+
+    @Override
+    public void applyMobLabels(Player player, EntityType type, Component displayName) {
+        player.displayName(displayName);
+        player.playerListName(displayName);
+        player.customName(displayName);
         player.setCustomNameVisible(true);
     }
 
