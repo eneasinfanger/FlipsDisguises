@@ -4,6 +4,7 @@ import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseResult;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseService;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 
 import java.util.UUID;
@@ -22,6 +23,11 @@ public final class FlipsDisguisesApiImpl implements FlipsDisguisesApi {
     @Override
     public CompletableFuture<DisguiseResult> disguisePlayerAsPlayer(Player target, String skinUsername) {
         return disguiseService.disguiseAsNamedPlayerApi(target, skinUsername);
+    }
+
+    @Override
+    public CompletableFuture<DisguiseResult> disguisePlayerAsMob(Player target, EntityType mobType) {
+        return disguiseService.disguiseAsMobApi(target, mobType);
     }
 
     @Override

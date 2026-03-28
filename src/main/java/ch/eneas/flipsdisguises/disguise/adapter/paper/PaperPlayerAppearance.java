@@ -11,6 +11,7 @@ import com.destroystokyo.paper.profile.PlayerProfile;
 import com.destroystokyo.paper.profile.ProfileProperty;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 
 @Injectable
@@ -34,7 +35,10 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
         String list = PLAIN.serialize(player.playerListName());
         String displayStored = disp.equals(username) ? null : disp;
         String listStored = list.equals(username) ? null : list;
-        return new PlayerLookBackup(skin, displayStored, listStored);
+        Component custom = player.customName();
+        String customPlain = custom == null ? null : PLAIN.serialize(custom);
+        boolean customVis = player.isCustomNameVisible();
+        return new PlayerLookBackup(skin, displayStored, listStored, customPlain, customVis);
     }
 
     @Override
@@ -44,11 +48,22 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
         Component label = Component.text(shownNamePlain);
         player.displayName(label);
         player.playerListName(label);
+        player.customName(label);
+        player.setCustomNameVisible(true);
         resendSubjectToOtherViewers(player);
     }
 
     @Override
-    public void restore(Player player, PlayerLookBackup backup) {
+    public void applyMobLabels(Player player, EntityType type) {
+        Component label = Component.text(prettyMobLabel(type));
+        player.displayName(label);
+        player.playerListName(label);
+        player.customName(label);
+        player.setCustomNameVisible(true);
+    }
+
+    @Override
+    public void restore(Player player, PlayerLookBackup backup, boolean resendViewers) {
         SkinSnapshot skin = backup.getSkin();
         String profileName = clampProfileName(
             skin.getDisplayName() == null || skin.getDisplayName().isBlank()
@@ -67,7 +82,16 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
         } else {
             player.playerListName(Component.text(backup.getListPlainOrNull()));
         }
-        resendSubjectToOtherViewers(player);
+        if (backup.getCustomNamePlainOrNull() == null) {
+            player.customName(null);
+            player.setCustomNameVisible(false);
+        } else {
+            player.customName(Component.text(backup.getCustomNamePlainOrNull()));
+            player.setCustomNameVisible(backup.isCustomNameVisibleBefore());
+        }
+        if (resendViewers) {
+            resendSubjectToOtherViewers(player);
+        }
     }
 
     private void applyProfileTexturesForSubject(Player subject, SkinSnapshot skin, String nameOnProfile) {
@@ -94,6 +118,22 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
                 viewer.showEntity(plugin, subject);
             }
         });
+    }
+
+    private static String prettyMobLabel(EntityType type) {
+        String raw = type.name().toLowerCase().replace('_', ' ');
+        String[] parts = raw.split(" ");
+        StringBuilder sb = new StringBuilder();
+        for (String p : parts) {
+            if (p.isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1));
+        }
+        return sb.isEmpty() ? "Mob" : sb.toString();
     }
 
     private static String clampProfileName(String raw) {

@@ -7,4 +7,6 @@ public class PlayerLookBackup {
     SkinSnapshot skin;
     String displayPlainOrNull;
     String listPlainOrNull;
+    String customNamePlainOrNull;
+    boolean customNameVisibleBefore;
 }

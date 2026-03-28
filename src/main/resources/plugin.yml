@@ -2,11 +2,21 @@ name: FlipsDisguises
 version: '${project.version}'
 main: ch.eneas.Main
 api-version: '1.21'
-description: Player skin disguises with a small programmatic API.
+description: Player skin disguises with a small programmatic API (embeds PacketEvents for mob model rewrites).
+softdepend:
+  - ProtocolLib
+  - ProtocolSupport
+  - ViaVersion
+  - ViaBackwards
+  - ViaRewind
+  - Geyser-Spigot
 
 permissions:
   flipsdisguises.disguise.player:
     description: Apply a player skin disguise to others.
+    default: op
+  flipsdisguises.disguise.mob:
+    description: Rewrite your entity model to a simple mob for other players (packet-based).
     default: op
   flipsdisguises.undisguise:
     description: Restore player appearance.

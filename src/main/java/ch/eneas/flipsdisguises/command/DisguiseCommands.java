@@ -14,6 +14,7 @@ import dev.jorel.commandapi.executors.CommandArguments;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 
 import java.util.Collection;
@@ -34,6 +35,37 @@ public final class DisguiseCommands implements CommandRegister {
     @Override
     public Collection<? extends ExecutableCommand<?, CommandSender>> registerAll() {
         return List.of(buildDisguiseCommand(), buildUndisguiseCommand());
+    }
+
+    private static EntityType parseMobOrNull(String raw) {
+        return DisguiseService.parseMobType(raw);
+    }
+
+    private CommandAPICommand buildMobSubcommand() {
+        EntitySelectorArgument.OnePlayer targetArg = new EntitySelectorArgument.OnePlayer("target");
+        return new CommandAPICommand("mob")
+            .withPermission("flipsdisguises.disguise.mob")
+            .withArguments(targetArg, new StringArgument("mobType"))
+            .executes((CommandSender sender, CommandArguments args) -> {
+                Player target = args.getOptionalUnchecked("target")
+                    .map(Player.class::cast)
+                    .orElseGet(() -> sender instanceof Player p ? p : null);
+                if (target == null) {
+                    sender.sendMessage(Component.text(
+                        "Specify a player target (console) or run as a player (self).",
+                        NamedTextColor.RED
+                    ));
+                    return;
+                }
+                String raw = (String) args.getUnchecked("mobType");
+                EntityType type = parseMobOrNull(raw);
+                if (type == null) {
+                    sender.sendMessage(Component.text("Unknown mob type.", NamedTextColor.RED));
+                    return;
+                }
+                disguiseService.disguiseAsMob(sender, target, type).thenAccept(result ->
+                    plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
+            });
     }
 
     private CommandAPICommand buildDisguiseCommand() {
@@ -59,9 +91,10 @@ public final class DisguiseCommands implements CommandRegister {
                     disguiseService.disguiseAsNamedPlayer(sender, target, skin).thenAccept(result ->
                         plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
                 }))
+            .withSubcommand(buildMobSubcommand())
             .executes((CommandSender sender, CommandArguments args) ->
                 sender.sendMessage(Component.text(
-                    "Usage: /disguise as <playerName>  or  /disguise player <target> <playerName>",
+                    "Usage: /disguise as <playerName> | /disguise player <target> <playerName> | /disguise mob [target] <mobType>",
                     NamedTextColor.YELLOW
                 )));
     }
