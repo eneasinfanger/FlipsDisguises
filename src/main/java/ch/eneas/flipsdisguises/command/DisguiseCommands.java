@@ -4,9 +4,12 @@ import ch.eneas.Main;
 import ch.eneas.flips.loader.api.CommandRegister;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
+import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseResult;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseService;
 import dev.jorel.commandapi.CommandAPICommand;
+import dev.jorel.commandapi.arguments.Argument;
+import dev.jorel.commandapi.arguments.ArgumentSuggestions;
 import dev.jorel.commandapi.arguments.EntitySelectorArgument;
 import dev.jorel.commandapi.arguments.StringArgument;
 import dev.jorel.commandapi.ExecutableCommand;
@@ -43,9 +46,11 @@ public final class DisguiseCommands implements CommandRegister {
 
     private CommandAPICommand buildMobSubcommand() {
         EntitySelectorArgument.OnePlayer targetArg = new EntitySelectorArgument.OnePlayer("target");
+        Argument<String> mobArg = new StringArgument("mobType")
+            .replaceSuggestions(ArgumentSuggestions.strings(info -> MobDisguiseEntityMapping.sortedSuggestionNames()));
         return new CommandAPICommand("mob")
             .withPermission("flipsdisguises.disguise.mob")
-            .withArguments(targetArg, new StringArgument("mobType"))
+            .withArguments(targetArg, mobArg)
             .executes((CommandSender sender, CommandArguments args) -> {
                 Player target = args.getOptionalUnchecked("target")
                     .map(Player.class::cast)
@@ -60,7 +65,14 @@ public final class DisguiseCommands implements CommandRegister {
                 String raw = (String) args.getUnchecked("mobType");
                 EntityType type = parseMobOrNull(raw);
                 if (type == null) {
-                    sender.sendMessage(Component.text("Unknown mob type.", NamedTextColor.RED));
+                    sender.sendMessage(Component.text("Unknown entity type name.", NamedTextColor.RED));
+                    return;
+                }
+                if (!MobDisguiseEntityMapping.isSupported(type)) {
+                    sender.sendMessage(Component.text(
+                        "That entity cannot be used as a mob disguise (non-living, blocked, or unmapped).",
+                        NamedTextColor.RED
+                    ));
                     return;
                 }
                 disguiseService.disguiseAsMob(sender, target, type).thenAccept(result ->

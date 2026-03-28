@@ -9,7 +9,6 @@ import com.github.retrooper.packetevents.event.PacketListener;
 import com.github.retrooper.packetevents.event.PacketListenerCommon;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
 import com.github.retrooper.packetevents.event.PacketSendEvent;
-import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
@@ -110,7 +109,11 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         if (event.getPacketType() == PacketType.Play.Server.SPAWN_ENTITY) {
             WrapperPlayServerSpawnEntity w = new WrapperPlayServerSpawnEntity(event);
             if (rewriteIfDisguised(event, w.getEntityId())) {
-                w.setEntityType(resolvePeType(w.getEntityId()));
+                EntityType bukkitMob = bukkitMobType(w.getEntityId());
+                w.setEntityType(MobDisguiseEntityMapping.toPacketEntityType(bukkitMob));
+                if (bukkitMob == EntityType.SLIME || bukkitMob == EntityType.MAGMA_CUBE) {
+                    w.setData(1);
+                }
                 event.markForReEncode(true);
             }
             return;
@@ -118,7 +121,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         if (event.getPacketType() == PacketType.Play.Server.SPAWN_LIVING_ENTITY) {
             WrapperPlayServerSpawnLivingEntity w = new WrapperPlayServerSpawnLivingEntity(event);
             if (rewriteIfDisguised(event, w.getEntityId())) {
-                w.setEntityType(resolvePeType(w.getEntityId()));
+                w.setEntityType(MobDisguiseEntityMapping.toPacketEntityType(bukkitMobType(w.getEntityId())));
                 w.setEntityMetadata(new ArrayList<>());
                 event.markForReEncode(true);
             }
@@ -156,10 +159,13 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         return true;
     }
 
-    private com.github.retrooper.packetevents.protocol.entity.type.EntityType resolvePeType(int entityId) {
+    private EntityType bukkitMobType(int entityId) {
         UUID subjectUuid = disguisedEntityIds.get(entityId);
         EntityType bukkit = mobTypeByPlayer.get(subjectUuid);
-        return bukkit == null ? EntityTypes.COW : toPacketType(bukkit);
+        if (bukkit == null) {
+            throw new IllegalStateException("No bukkit mob type for entity " + entityId);
+        }
+        return bukkit;
     }
 
     private void syncEntityId(Player player) {
@@ -183,13 +189,4 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         });
     }
 
-    private static com.github.retrooper.packetevents.protocol.entity.type.EntityType toPacketType(EntityType bukkit) {
-        return switch (bukkit) {
-            case COW -> EntityTypes.COW;
-            case PIG -> EntityTypes.PIG;
-            case CHICKEN -> EntityTypes.CHICKEN;
-            case SHEEP -> EntityTypes.SHEEP;
-            default -> EntityTypes.COW;
-        };
-    }
 }

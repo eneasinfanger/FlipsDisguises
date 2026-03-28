@@ -4,6 +4,7 @@ import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.PlayerLookBackup;
 import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
+import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
 import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
@@ -17,7 +18,6 @@ import org.bukkit.entity.Player;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.EnumSet;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -27,12 +27,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class DisguiseService {
 
     private static final Logger LOG = LoggerFactory.getLogger(DisguiseService.class);
-    private static final EnumSet<EntityType> MOB_MVP = EnumSet.of(
-        EntityType.COW,
-        EntityType.PIG,
-        EntityType.CHICKEN,
-        EntityType.SHEEP
-    );
 
     private final SyncTaskRunner syncTasks;
     private final SkinCatalog skins;
@@ -134,9 +128,12 @@ public final class DisguiseService {
                 DisguiseResult.failure(Component.text("Slow down.", NamedTextColor.RED))
             );
         }
-        if (!MOB_MVP.contains(type)) {
+        if (!MobDisguiseEntityMapping.isSupported(type)) {
             return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("That mob type is not supported yet.", NamedTextColor.RED))
+                DisguiseResult.failure(Component.text(
+                    "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped).",
+                    NamedTextColor.RED
+                ))
             );
         }
         CompletableFuture<DisguiseResult> done = new CompletableFuture<>();
@@ -165,9 +162,12 @@ public final class DisguiseService {
                 DisguiseResult.failure(Component.text("API disguises are disabled.", NamedTextColor.RED))
             );
         }
-        if (!MOB_MVP.contains(type)) {
+        if (!MobDisguiseEntityMapping.isSupported(type)) {
             return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("That mob type is not supported yet.", NamedTextColor.RED))
+                DisguiseResult.failure(Component.text(
+                    "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped).",
+                    NamedTextColor.RED
+                ))
             );
         }
         CompletableFuture<DisguiseResult> done = new CompletableFuture<>();

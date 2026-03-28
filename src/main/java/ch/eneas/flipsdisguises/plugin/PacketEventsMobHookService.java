@@ -3,6 +3,7 @@ package ch.eneas.flipsdisguises.plugin;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flips.loader.api.Service;
+import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
 import ch.eneas.flipsdisguises.disguise.adapter.packet.PacketMobDisguisePort;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -19,6 +20,7 @@ public final class PacketEventsMobHookService implements Service {
     @Override
     public void startup(JavaPlugin myPlugin) {
         mobDisguise.registerPacketListener();
+        MobDisguiseEntityMapping.supportedCount();
     }
 
     @Override
