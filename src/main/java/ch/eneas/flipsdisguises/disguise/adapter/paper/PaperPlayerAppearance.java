@@ -17,6 +17,8 @@ import org.bukkit.entity.Player;
 public final class PaperPlayerAppearance implements PlayerAppearancePort {
 
     private static final PlainTextComponentSerializer PLAIN = PlainTextComponentSerializer.plainText();
+    private static final int MAX_PROFILE_NAME_LENGTH = 16;
+
     private final Main plugin;
 
     @Inject
@@ -37,15 +39,23 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
 
     @Override
     public void applyImpersonation(Player player, SkinSnapshot skin, String shownNamePlain) {
-        setProfileFromSnapshot(plugin, player, skin);
+        String profileName = clampProfileName(shownNamePlain);
+        applyProfileTexturesForSubject(player, skin, profileName);
         Component label = Component.text(shownNamePlain);
         player.displayName(label);
         player.playerListName(label);
+        resendSubjectToOtherViewers(player);
     }
 
     @Override
     public void restore(Player player, PlayerLookBackup backup) {
-        setProfileFromSnapshot(plugin, player, backup.getSkin());
+        SkinSnapshot skin = backup.getSkin();
+        String profileName = clampProfileName(
+            skin.getDisplayName() == null || skin.getDisplayName().isBlank()
+                ? player.getName()
+                : skin.getDisplayName()
+        );
+        applyProfileTexturesForSubject(player, skin, profileName);
         String name = player.getName();
         if (backup.getDisplayPlainOrNull() == null) {
             player.displayName(Component.text(name));
@@ -57,10 +67,12 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
         } else {
             player.playerListName(Component.text(backup.getListPlainOrNull()));
         }
+        resendSubjectToOtherViewers(player);
     }
 
-    private static void setProfileFromSnapshot(Main plugin, Player player, SkinSnapshot skin) {
-        PlayerProfile profile = plugin.getServer().createProfile(skin.getPlayerId(), skin.getDisplayName());
+    private void applyProfileTexturesForSubject(Player subject, SkinSnapshot skin, String nameOnProfile) {
+        PlayerProfile profile = plugin.getServer().createProfile(subject.getUniqueId(), nameOnProfile);
+        profile.clearProperties();
         for (SkinProperty p : skin.getProperties()) {
             String sig = p.getSignature() == null || p.getSignature().isEmpty() ? null : p.getSignature();
             if (sig == null) {
@@ -69,6 +81,26 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
                 profile.setProperty(new ProfileProperty(p.getName(), p.getValue(), sig));
             }
         }
-        player.setPlayerProfile(profile);
+        subject.setPlayerProfile(profile);
+    }
+
+    private void resendSubjectToOtherViewers(Player subject) {
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            for (Player viewer : plugin.getServer().getOnlinePlayers()) {
+                if (viewer.getUniqueId().equals(subject.getUniqueId())) {
+                    continue;
+                }
+                viewer.hideEntity(plugin, subject);
+                viewer.showEntity(plugin, subject);
+            }
+        });
+    }
+
+    private static String clampProfileName(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "Player";
+        }
+        String t = raw.trim();
+        return t.length() > MAX_PROFILE_NAME_LENGTH ? t.substring(0, MAX_PROFILE_NAME_LENGTH) : t;
     }
 }

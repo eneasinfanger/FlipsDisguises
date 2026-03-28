@@ -7,7 +7,7 @@ import java.util.UUID;
 
 @Value
 public class SkinSnapshot {
-    UUID playerId;
+    UUID skinSourceUuid;
     String displayName;
     List<SkinProperty> properties;
 }

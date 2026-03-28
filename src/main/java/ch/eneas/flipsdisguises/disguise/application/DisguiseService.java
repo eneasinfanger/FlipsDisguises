@@ -119,10 +119,10 @@ public final class DisguiseService {
                 originalsByPlayer.putIfAbsent(target.getUniqueId(), appearance.capture(target));
                 appearance.applyImpersonation(target, skin, shown);
                 LOG.info(
-                    "Applied disguise for {} as '{}' ({})",
+                    "Applied disguise for {} as '{}' (skin source {})",
                     target.getUniqueId(),
                     shown,
-                    skin.getPlayerId()
+                    skin.getSkinSourceUuid()
                 );
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
