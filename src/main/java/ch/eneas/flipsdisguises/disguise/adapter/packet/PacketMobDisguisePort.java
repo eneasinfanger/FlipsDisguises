@@ -230,15 +230,33 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         if (event.getPacketType() == PacketType.Play.Server.SPAWN_ENTITY) {
             WrapperPlayServerSpawnEntity w = new WrapperPlayServerSpawnEntity(event);
             if (rewriteIfDisguised(w.getEntityId())) {
-                EntityType bukkitMob = bukkitMobType(w.getEntityId());
-                w.setEntityType(MobDisguiseEntityMapping.toPacketEntityType(bukkitMob));
-                if (bukkitMob == EntityType.SLIME || bukkitMob == EntityType.MAGMA_CUBE) {
-                    w.setData(slimeOrMagmaSpawnData(bukkitMob, optionsForEntityId(w.getEntityId())));
-                }
-                if (bukkitMob == EntityType.ENDER_DRAGON) {
-                    fixEnderDragonSpawnAngles(w);
-                }
-                event.markForReEncode(true);
+                int eid = w.getEntityId();
+                EntityType bukkitMob = bukkitMobType(eid);
+                UUID subjectUuid = disguisedEntityIds.get(eid);
+                UUID uuid = w.getUUID().orElse(subjectUuid);
+                Vector3d p = w.getPosition();
+                Vector3d pos = new Vector3d(p.getX(), p.getY(), p.getZ());
+                float yaw = w.getYaw();
+                float pitch = w.getPitch();
+                User user = event.getUser();
+                ServerVersion serverVersion = event.getServerVersion();
+                ClientVersion clientVersion = user.getClientVersion();
+                MobDisguiseOptions disguiseOpts = optionsForEntityId(eid);
+                event.setCancelled(true);
+                PacketWrapper<?> replacement = buildMobSpawnReplacement(
+                    eid,
+                    uuid,
+                    pos,
+                    yaw,
+                    pitch,
+                    bukkitMob,
+                    disguiseOpts,
+                    clientVersion
+                );
+                replacement.setServerVersion(serverVersion);
+                replacement.setClientVersion(clientVersion);
+                replacement.prepareForSend(user, true);
+                user.sendPacket(replacement);
             }
             return;
         }
