@@ -1,6 +1,6 @@
 package ch.eneas.flipsdisguises.disguise.adapter.paper;
 
-import ch.eneas.Main;
+import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.SkinProperty;
@@ -20,11 +20,11 @@ import java.util.concurrent.TimeUnit;
 @Injectable
 public final class PaperSkinCatalog implements SkinCatalog {
 
-    private final Main plugin;
+    private final PluginMain plugin;
     private final AsyncLoadingCache<String, SkinSnapshot> cache;
 
     @Inject
-    public PaperSkinCatalog(Main plugin) {
+    public PaperSkinCatalog(PluginMain plugin) {
         this.plugin = plugin;
         this.cache = Caffeine.newBuilder()
             .maximumSize(512)

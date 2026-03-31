@@ -1,6 +1,6 @@
 name: FlipsDisguises
 version: '${project.version}'
-main: ch.eneas.Main
+main: ch.eneas.PluginMain
 api-version: '1.21'
 description: Player skin disguises with a small programmatic API (embeds PacketEvents for mob model rewrites).
 softdepend:

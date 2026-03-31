@@ -1,6 +1,6 @@
 package ch.eneas.flipsdisguises.disguise.adapter.paper;
 
-import ch.eneas.Main;
+import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.PlayerLookBackup;
@@ -20,10 +20,10 @@ public final class PaperPlayerAppearance implements PlayerAppearancePort {
     private static final PlainTextComponentSerializer PLAIN = PlainTextComponentSerializer.plainText();
     private static final int MAX_PROFILE_NAME_LENGTH = 16;
 
-    private final Main plugin;
+    private final PluginMain plugin;
 
     @Inject
-    public PaperPlayerAppearance(Main plugin) {
+    public PaperPlayerAppearance(PluginMain plugin) {
         this.plugin = plugin;
     }
 

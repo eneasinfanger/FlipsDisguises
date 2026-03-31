@@ -1,6 +1,6 @@
 package ch.eneas.flipsdisguises.command;
 
-import ch.eneas.Main;
+import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.CommandRegister;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
@@ -17,10 +17,10 @@ import java.util.List;
 @Injectable
 public final class AdminCommands implements CommandRegister {
 
-    private final Main plugin;
+    private final PluginMain plugin;
 
     @Inject
-    public AdminCommands(Main plugin) {
+    public AdminCommands(PluginMain plugin) {
         this.plugin = plugin;
     }
 

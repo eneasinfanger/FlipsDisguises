@@ -46,18 +46,18 @@ public final class MobDisguiseSyntheticMetadata {
 
     public static List<EntityData<?>> fragment(ClientVersion cv, EntityType mob, MobDisguiseOptions o) {
         List<EntityData<?>> list = new ArrayList<>();
-        o.displayName().ifPresent(c -> {
-            list.add(new EntityData<>(IDX_CUSTOM_NAME, EntityDataTypes.OPTIONAL_ADV_COMPONENT, Optional.of(c)));
+        if (o.displayName() != null) {
+            list.add(new EntityData<>(IDX_CUSTOM_NAME, EntityDataTypes.OPTIONAL_ADV_COMPONENT, Optional.of(o.displayName())));
             list.add(new EntityData<>(IDX_CUSTOM_NAME_VISIBLE, EntityDataTypes.BOOLEAN, true));
-        });
+        }
         if (mob == EntityType.SLIME || mob == EntityType.MAGMA_CUBE) {
-            int sz = o.slimeOrMagmaSize() > 0 ? o.effectiveSlimeOrMagmaSize() : 1;
+            int sz = o.size() != null ? o.effectiveSlimeOrMagmaSize() : 1;
             list.add(new EntityData<>(IDX_SLIME_SIZE, EntityDataTypes.INT, sz));
         }
-        if (mob == EntityType.PHANTOM && o.slimeOrMagmaSize() > 0) {
+        if (mob == EntityType.PHANTOM && o.size() != null) {
             list.add(new EntityData<>(IDX_PHANTOM_SIZE, EntityDataTypes.INT, o.effectiveSlimeOrMagmaSize()));
         }
-        o.variant().ifPresent(v -> addVariantEntries(list, cv, mob, v));
+//        o.variant().ifPresent(v -> addVariantEntries(list, cv, mob, v));
         return list;
     }
 

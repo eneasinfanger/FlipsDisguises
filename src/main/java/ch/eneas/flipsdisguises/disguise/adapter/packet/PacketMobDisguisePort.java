@@ -1,6 +1,6 @@
 package ch.eneas.flipsdisguises.disguise.adapter.packet;
 
-import ch.eneas.Main;
+import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
@@ -56,7 +56,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Injectable
 public final class PacketMobDisguisePort implements MobDisguisePort, PacketListener, Listener {
 
-    private final Main plugin;
+    private final PluginMain plugin;
     private final Map<UUID, EntityType> mobTypeByEntityUuid = new ConcurrentHashMap<>();
     private final Map<UUID, MobDisguiseOptions> mobOptionsByEntityUuid = new ConcurrentHashMap<>();
     private final Map<Integer, UUID> disguisedEntityIds = new ConcurrentHashMap<>();
@@ -77,7 +77,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     private volatile PacketListenerCommon packetHandle;
 
     @Inject
-    public PacketMobDisguisePort(Main plugin) {
+    public PacketMobDisguisePort(PluginMain plugin) {
         this.plugin = plugin;
     }
 
@@ -470,7 +470,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         if (bukkitMob != EntityType.SLIME && bukkitMob != EntityType.MAGMA_CUBE) {
             return 0;
         }
-        return o.slimeOrMagmaSize() > 0 ? o.effectiveSlimeOrMagmaSize() : 1;
+        return o.effectiveSlimeOrMagmaSize();
     }
 
     private static boolean usesSpawnEntityPacket(EntityType bukkit) {

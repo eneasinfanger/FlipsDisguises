@@ -161,8 +161,8 @@ public final class DisguiseService {
                     return;
                 }
                 prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_MOB);
-                if (opts.displayName().isPresent()) {
-                    appearance.applyMobLabels(target, type, opts.displayName().get());
+                if (opts.displayName() != null) {
+                    appearance.applyMobLabels(target, type, opts.displayName());
                 } else {
                     appearance.applyMobLabels(target, type);
                 }
@@ -204,8 +204,8 @@ public final class DisguiseService {
                     return;
                 }
                 prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_MOB);
-                if (opts.displayName().isPresent()) {
-                    appearance.applyMobLabels(target, type, opts.displayName().get());
+                if (opts.displayName() != null) {
+                    appearance.applyMobLabels(target, type, opts.displayName());
                 } else {
                     appearance.applyMobLabels(target, type);
                 }
@@ -369,17 +369,6 @@ public final class DisguiseService {
         mobDisguise.detach(target);
         LOG.info("Removed mob disguise from entity {}", target.getUniqueId());
         return DisguiseResult.ok();
-    }
-
-    public static EntityType parseMobType(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        try {
-            return EntityType.valueOf(raw.trim().toUpperCase().replace(' ', '_'));
-        } catch (IllegalArgumentException ex) {
-            return null;
-        }
     }
 
     private CompletableFuture<DisguiseResult> scheduleApplyPlayer(Player target, SkinSnapshot skin, String requestedName) {

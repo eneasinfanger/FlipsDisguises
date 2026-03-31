@@ -1,19 +1,16 @@
 package ch.eneas.flipsdisguises.command;
 
-import ch.eneas.Main;
+import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.CommandRegister;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
+import ch.eneas.flipsdisguises.command.args.disgopts.MobDisguiseOptionsArgument;
 import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseResult;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseService;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
 import dev.jorel.commandapi.CommandAPICommand;
-import dev.jorel.commandapi.arguments.Argument;
-import dev.jorel.commandapi.arguments.ArgumentSuggestions;
-import dev.jorel.commandapi.arguments.EntitySelectorArgument;
-import dev.jorel.commandapi.arguments.GreedyStringArgument;
-import dev.jorel.commandapi.arguments.StringArgument;
+import dev.jorel.commandapi.arguments.*;
 import dev.jorel.commandapi.ExecutableCommand;
 import dev.jorel.commandapi.executors.CommandArguments;
 import net.kyori.adventure.text.Component;
@@ -30,12 +27,11 @@ import java.util.List;
 
 @Injectable
 public final class DisguiseCommands implements CommandRegister {
-
-    private final Main plugin;
+    private final PluginMain plugin;
     private final DisguiseService disguiseService;
 
     @Inject
-    public DisguiseCommands(Main plugin, DisguiseService disguiseService) {
+    public DisguiseCommands(PluginMain plugin, DisguiseService disguiseService) {
         this.plugin = plugin;
         this.disguiseService = disguiseService;
     }
@@ -45,15 +41,10 @@ public final class DisguiseCommands implements CommandRegister {
         return List.of(buildDisguiseCommand(), buildUndisguiseCommand());
     }
 
-    private static EntityType parseMobOrNull(String raw) {
-        return DisguiseService.parseMobType(raw);
-    }
-
     private CommandAPICommand buildMobSubcommand() {
         EntitySelectorArgument.OnePlayer targetArg = new EntitySelectorArgument.OnePlayer("target");
-        Argument<String> mobArg = new StringArgument("mobType")
-            .replaceSuggestions(ArgumentSuggestions.strings(info -> MobDisguiseEntityMapping.sortedSuggestionNames()));
-        GreedyStringArgument flagArg = new GreedyStringArgument("mobFlags");
+        Argument<EntityType> mobArg = new EntityTypeArgument("mobType");
+        Argument<MobDisguiseOptions> flagArg = new MobDisguiseOptionsArgument("mobFlags", "mobType");
         flagArg.setOptional(true);
         return new CommandAPICommand("mob")
             .withPermission("flipsdisguises.disguise.mob")
@@ -69,8 +60,7 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                String raw = (String) args.getUnchecked("mobType");
-                EntityType type = parseMobOrNull(raw);
+                EntityType type = args.getUnchecked("mobType");
                 if (type == null) {
                     sender.sendMessage(Component.text("Unknown entity type name.", NamedTextColor.RED));
                     return;
@@ -82,31 +72,16 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                MobDisguiseOptions opts;
-                try {
-                    opts = MobDisguiseFlagParser.parse(flagString(args, "mobFlags"));
-                } catch (IllegalArgumentException ex) {
-                    sender.sendMessage(Component.text(ex.getMessage(), NamedTextColor.RED));
-                    return;
-                }
+                MobDisguiseOptions opts = args.getUnchecked("mobFlags");
                 disguiseService.disguiseAsMob(sender, target, type, opts).thenAccept(result ->
                     plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
             });
     }
 
-    private static String flagString(CommandArguments args, String key) {
-        return args.getOptionalUnchecked(key)
-            .map(Object::toString)
-            .map(String::trim)
-            .filter(s -> !s.isEmpty())
-            .orElse("");
-    }
-
     private CommandAPICommand buildEntityMobSubcommand() {
         EntitySelectorArgument.ManyEntities entitiesArg = new EntitySelectorArgument.ManyEntities("entities");
-        Argument<String> mobArg = new StringArgument("mobType")
-            .replaceSuggestions(ArgumentSuggestions.strings(info -> MobDisguiseEntityMapping.sortedSuggestionNames()));
-        GreedyStringArgument flagArg = new GreedyStringArgument("mobFlags");
+        Argument<EntityType> mobArg = new EntityTypeArgument("mobType");
+        Argument<MobDisguiseOptions> flagArg = new MobDisguiseOptionsArgument("mobFlags", "mobType");
         flagArg.setOptional(true);
         return new CommandAPICommand("entity")
             .withPermission("flipsdisguises.disguise.entity")
@@ -114,8 +89,7 @@ public final class DisguiseCommands implements CommandRegister {
             .executes((CommandSender sender, CommandArguments args) -> {
                 @SuppressWarnings("unchecked")
                 Collection<Entity> selected = (Collection<Entity>) args.getUnchecked("entities");
-                String raw = (String) args.getUnchecked("mobType");
-                EntityType type = parseMobOrNull(raw);
+                EntityType type = args.getUnchecked("mobType");
                 if (type == null) {
                     sender.sendMessage(Component.text("Unknown entity type name.", NamedTextColor.RED));
                     return;
@@ -127,13 +101,7 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                MobDisguiseOptions opts;
-                try {
-                    opts = MobDisguiseFlagParser.parse(flagString(args, "mobFlags"));
-                } catch (IllegalArgumentException ex) {
-                    sender.sendMessage(Component.text(ex.getMessage(), NamedTextColor.RED));
-                    return;
-                }
+                MobDisguiseOptions opts = args.getUnchecked("mobFlags");
                 List<LivingEntity> living = new ArrayList<>();
                 int nonLiving = 0;
                 for (Entity e : selected) {

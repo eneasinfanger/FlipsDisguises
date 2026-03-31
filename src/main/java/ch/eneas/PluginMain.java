@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.logging.Level;
 
 @Injectable
-public class Main extends JavaPlugin {
+public class PluginMain extends JavaPlugin {
     private static final String SHADED_PACKAGE = "ch.eneas.flipsdisguises.shaded";
     private volatile boolean loaderStarted;
 

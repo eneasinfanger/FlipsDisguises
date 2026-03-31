@@ -1,16 +1,16 @@
 package ch.eneas.flipsdisguises.plugin;
 
-import ch.eneas.Main;
+import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 
 @Injectable
 public final class PaperSyncTaskRunner implements SyncTaskRunner {
 
-    private final Main plugin;
+    private final PluginMain plugin;
 
     @Inject
-    public PaperSyncTaskRunner(Main plugin) {
+    public PaperSyncTaskRunner(PluginMain plugin) {
         this.plugin = plugin;
     }
 
