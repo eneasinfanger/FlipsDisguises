@@ -124,7 +124,7 @@ public class MobDisguiseOptionsArgument extends CustomArgument<MobDisguiseOption
                         throw CustomArgumentException.fromString(e.getMessage());
                     }
                 }
-                return null;
+                return opts;
             } catch (CustomArgumentException e) {
                 throw e;
             } catch (Exception e) {

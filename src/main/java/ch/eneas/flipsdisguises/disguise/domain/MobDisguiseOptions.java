@@ -11,7 +11,6 @@ import lombok.experimental.Accessors;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.util.TriState;
 import org.bukkit.DyeColor;
-import org.bukkit.Material;
 import org.bukkit.entity.*;
 
 import static ch.eneas.flipsdisguises.disguise.meta.EntityCategory.*;
@@ -35,7 +34,7 @@ public class MobDisguiseOptions {
     private Pose pose;
     @ValidFor(categories = LIVING)
     @ArgType(BooleanArgument.class)
-    private Boolean silent; // TODO does this matter?
+    private Boolean silent;
     @ValidFor(categories = LIVING)
     @ArgType(BooleanArgument.class)
     private Boolean sneaking;
@@ -48,6 +47,9 @@ public class MobDisguiseOptions {
     @ValidFor({EntityType.PHANTOM, EntityType.SLIME, EntityType.MAGMA_CUBE})
     @ArgType(IntegerArgument.class)
     private Integer size;
+    @ValidFor(EntityType.AXOLOTL)
+    @ArgType(AxolotlVariantArgument.class)
+    private Axolotl.Variant axolotlVariant;
     @ValidFor({EntityType.VILLAGER, EntityType.ZOMBIE_VILLAGER})
     @ArgType(VillagerProfessionArgument.class)
     private Villager.Profession profession;
@@ -64,19 +66,14 @@ public class MobDisguiseOptions {
     @ArgType(BooleanArgument.class)
     private Boolean charged;
     @ValidFor({
-        EntityType.PIG,
         EntityType.HORSE,
         EntityType.SKELETON_HORSE,
         EntityType.ZOMBIE_HORSE,
         EntityType.DONKEY,
-        EntityType.MULE,
-        EntityType.STRIDER
+        EntityType.MULE
     })
     @ArgType(BooleanArgument.class)
     private Boolean saddled;
-    @ValidFor({EntityType.FALLING_BLOCK, EntityType.ITEM})
-    @ArgType(MaterialArgument.class)
-    private Material material;
     @ValidFor(EntityType.HORSE)
     @ArgType(HorseColorArgument.class)
     private Horse.Color horseColor;

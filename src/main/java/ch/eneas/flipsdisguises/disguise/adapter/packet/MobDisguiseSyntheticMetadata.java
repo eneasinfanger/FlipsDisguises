@@ -13,13 +13,31 @@ import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.frog.FrogVariant;
 import com.github.retrooper.packetevents.protocol.entity.frog.FrogVariants;
+import com.github.retrooper.packetevents.protocol.entity.horse.HorseVariant;
+import com.github.retrooper.packetevents.protocol.entity.horse.HorseVariants;
 import com.github.retrooper.packetevents.protocol.entity.pig.PigVariant;
 import com.github.retrooper.packetevents.protocol.entity.pig.PigVariants;
+import com.github.retrooper.packetevents.protocol.entity.pose.EntityPose;
+import com.github.retrooper.packetevents.protocol.entity.villager.VillagerData;
+import com.github.retrooper.packetevents.protocol.entity.villager.profession.VillagerProfession;
+import com.github.retrooper.packetevents.protocol.entity.villager.profession.VillagerProfessions;
+import com.github.retrooper.packetevents.protocol.entity.villager.type.VillagerType;
+import com.github.retrooper.packetevents.protocol.entity.villager.type.VillagerTypes;
 import com.github.retrooper.packetevents.protocol.entity.wolfvariant.WolfVariant;
 import com.github.retrooper.packetevents.protocol.entity.wolfvariant.WolfVariants;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
+import net.kyori.adventure.util.TriState;
 import org.bukkit.DyeColor;
+import org.bukkit.entity.Ageable;
+import org.bukkit.entity.Cat;
+import org.bukkit.entity.Cow;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Frog;
+import org.bukkit.entity.Horse;
+import org.bukkit.entity.Pig;
+import org.bukkit.entity.Pose;
+import org.bukkit.entity.Villager;
+import org.bukkit.util.OldEnum;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -28,102 +46,247 @@ import java.util.Optional;
 
 public final class MobDisguiseSyntheticMetadata {
 
+    private static final int IDX_SHARED_FLAGS = 0;
     private static final int IDX_CUSTOM_NAME = 2;
     private static final int IDX_CUSTOM_NAME_VISIBLE = 3;
+    private static final int IDX_SILENT = 4;
+    private static final int IDX_POSE = 6;
+    private static final int IDX_BABY = 16;
+    private static final int IDX_SLIME_OR_PHANTOM_SIZE = 16;
     private static final int IDX_SHEEP_WOOL = 17;
-    private static final int IDX_SLIME_SIZE = 17;
-    private static final int IDX_PHANTOM_SIZE = 17;
+    private static final int IDX_COW_VARIANT = 17;
     private static final int IDX_AXOLOTL_VARIANT = 17;
     private static final int IDX_FROG_VARIANT = 17;
-    private static final int IDX_COW_VARIANT = 17;
     private static final int IDX_CHICKEN_VARIANT = 17;
-    private static final int IDX_CAT_VARIANT = 19;
-    private static final int IDX_WOLF_VARIANT = 22;
+    private static final int IDX_CREEPER_POWERED = 17;
     private static final int IDX_PIG_VARIANT = 18;
+    private static final int IDX_CAT_VARIANT = 19;
+    private static final int IDX_VILLAGER_DATA = 18;
+    private static final int IDX_WOLF_COLLAR = 20;
+    private static final int IDX_WOLF_VARIANT = 22;
+    private static final int IDX_CAT_COLLAR = 22;
+    private static final int IDX_ZOMBIE_VILLAGER_DATA = 20;
+    private static final int IDX_HORSE_FLAGS = 17;
+    private static final int IDX_HORSE_TYPE_VARIANT = 18;
 
     private MobDisguiseSyntheticMetadata() {
     }
 
     public static List<EntityData<?>> fragment(ClientVersion cv, EntityType mob, MobDisguiseOptions o) {
+        MobDisguiseOptions opts = o == null ? MobDisguiseOptions.DEFAULT : o;
         List<EntityData<?>> list = new ArrayList<>();
-        if (o.displayName() != null) {
-            list.add(new EntityData<>(IDX_CUSTOM_NAME, EntityDataTypes.OPTIONAL_ADV_COMPONENT, Optional.of(o.displayName())));
+        addSharedFlags(list, opts);
+        if (opts.displayName() != null) {
+            list.add(new EntityData<>(IDX_CUSTOM_NAME, EntityDataTypes.OPTIONAL_ADV_COMPONENT, Optional.of(opts.displayName())));
             list.add(new EntityData<>(IDX_CUSTOM_NAME_VISIBLE, EntityDataTypes.BOOLEAN, true));
         }
+        if (opts.silent() != null) {
+            list.add(new EntityData<>(IDX_SILENT, EntityDataTypes.BOOLEAN, opts.silent()));
+        }
+        if (opts.pose() != null) {
+            EntityPose ep = bukkitPoseToPe(opts.pose());
+            if (ep != null) {
+                list.add(new EntityData<>(IDX_POSE, EntityDataTypes.ENTITY_POSE, ep));
+            }
+        }
+        if (opts.baby() != null && hasBabyKey(mob)) {
+            list.add(new EntityData<>(IDX_BABY, EntityDataTypes.BOOLEAN, opts.baby()));
+        }
         if (mob == EntityType.SLIME || mob == EntityType.MAGMA_CUBE) {
-            int sz = o.size() != null ? o.effectiveSlimeOrMagmaSize() : 1;
-            list.add(new EntityData<>(IDX_SLIME_SIZE, EntityDataTypes.INT, sz));
+            int sz = opts.size() != null ? opts.effectiveSlimeOrMagmaSize() : 1;
+            list.add(new EntityData<>(IDX_SLIME_OR_PHANTOM_SIZE, EntityDataTypes.INT, sz));
         }
-        if (mob == EntityType.PHANTOM && o.size() != null) {
-            list.add(new EntityData<>(IDX_PHANTOM_SIZE, EntityDataTypes.INT, o.effectiveSlimeOrMagmaSize()));
+        if (mob == EntityType.PHANTOM && opts.size() != null) {
+            list.add(new EntityData<>(IDX_SLIME_OR_PHANTOM_SIZE, EntityDataTypes.INT, opts.effectiveSlimeOrMagmaSize()));
         }
-//        o.variant().ifPresent(v -> addVariantEntries(list, cv, mob, v));
+        if (mob == EntityType.SHEEP) {
+            byte wool = sheepWoolByte(opts);
+            list.add(new EntityData<>(IDX_SHEEP_WOOL, EntityDataTypes.BYTE, wool));
+        }
+        if (mob == EntityType.COW && opts.cowVariant() != null) {
+            CowVariant cvv = bukkitCowVariant(opts.cowVariant());
+            if (cvv != null) {
+                list.add(new EntityData<>(IDX_COW_VARIANT, EntityDataTypes.COW_VARIANT, cvv));
+            }
+        }
+        if (mob == EntityType.CAT) {
+            if (opts.catVariant() != null) {
+                CatVariant cat = resolveCat(oldEnumName(opts.catVariant()));
+                if (cat != null) {
+                    list.add(new EntityData<>(IDX_CAT_VARIANT, EntityDataTypes.TYPED_CAT_VARIANT, cat));
+                }
+            }
+            if (opts.color() != null) {
+                list.add(new EntityData<>(IDX_CAT_COLLAR, EntityDataTypes.BYTE, (byte) (opts.color().ordinal() & 0x0F)));
+            }
+        }
+        if (mob == EntityType.WOLF) {
+            if (opts.wolfVariant() != null) {
+                WolfVariant wv = resolveWolf(registryPathUpper(opts.wolfVariant()));
+                if (wv != null) {
+                    list.add(new EntityData<>(IDX_WOLF_VARIANT, EntityDataTypes.TYPED_WOLF_VARIANT, wv));
+                }
+            }
+            if (opts.color() != null) {
+                list.add(new EntityData<>(IDX_WOLF_COLLAR, EntityDataTypes.BYTE, (byte) (opts.color().ordinal() & 0x0F)));
+            }
+        }
+        if (mob == EntityType.AXOLOTL && opts.axolotlVariant() != null) {
+            AxolotlVariant av = resolveAxolotl(opts.axolotlVariant().name());
+            if (av != null) {
+                list.add(new EntityData<>(IDX_AXOLOTL_VARIANT, EntityDataTypes.INT, av.getId(cv)));
+            }
+        }
+        if (mob == EntityType.FROG && opts.frogVariant() != null) {
+            FrogVariant fv = resolveFrog(registryPathUpper(opts.frogVariant()));
+            if (fv != null) {
+                list.add(new EntityData<>(IDX_FROG_VARIANT, EntityDataTypes.TYPED_FROG_VARIANT, fv));
+            }
+        }
+        if (mob == EntityType.CHICKEN && opts.chickenVariant() != null) {
+            ChickenVariant ch = resolveChicken(registryPathUpper(opts.chickenVariant()));
+            if (ch != null) {
+                list.add(new EntityData<>(IDX_CHICKEN_VARIANT, EntityDataTypes.CHICKEN_VARIANT, ch));
+            }
+        }
+        if (mob == EntityType.PIG && opts.pigVariant() != null) {
+            PigVariant pv = resolvePig(registryPathUpper(opts.pigVariant()));
+            if (pv != null) {
+                list.add(new EntityData<>(IDX_PIG_VARIANT, EntityDataTypes.PIG_VARIANT, pv));
+            }
+        }
+        if (mob == EntityType.CREEPER && opts.charged() != null) {
+            list.add(new EntityData<>(IDX_CREEPER_POWERED, EntityDataTypes.BOOLEAN, opts.charged()));
+        }
+        if (mob == EntityType.VILLAGER) {
+            VillagerData vd = villagerData(opts);
+            list.add(new EntityData<>(IDX_VILLAGER_DATA, EntityDataTypes.VILLAGER_DATA, vd));
+        }
+        if (mob == EntityType.ZOMBIE_VILLAGER) {
+            VillagerData vd = villagerData(opts);
+            list.add(new EntityData<>(IDX_ZOMBIE_VILLAGER_DATA, EntityDataTypes.VILLAGER_DATA, vd));
+        }
+        if (mob == EntityType.HORSE) {
+            list.add(new EntityData<>(IDX_HORSE_FLAGS, EntityDataTypes.BYTE, horseFamilyFlags(opts)));
+            HorseVariant hv = peHorseColor(opts.horseColor());
+            list.add(new EntityData<>(IDX_HORSE_TYPE_VARIANT, EntityDataTypes.INT, hv.getId(cv)));
+        }
+        if (mob == EntityType.SKELETON_HORSE || mob == EntityType.ZOMBIE_HORSE) {
+            list.add(new EntityData<>(IDX_HORSE_FLAGS, EntityDataTypes.BYTE, horseFamilyFlags(opts)));
+        }
+        if (mob == EntityType.DONKEY || mob == EntityType.MULE) {
+            list.add(new EntityData<>(IDX_HORSE_FLAGS, EntityDataTypes.BYTE, horseFamilyFlags(opts)));
+        }
         return list;
     }
 
-    private static void addVariantEntries(List<EntityData<?>> list, ClientVersion cv, EntityType mob, String raw) {
-        String key = raw.trim();
-        if (key.isEmpty()) {
-            return;
+    private static boolean hasBabyKey(EntityType mob) {
+        Class<?> ec = mob.getEntityClass();
+        return ec != null && Ageable.class.isAssignableFrom(ec);
+    }
+
+    private static void addSharedFlags(List<EntityData<?>> list, MobDisguiseOptions o) {
+        int bits = 0;
+        if (Boolean.TRUE.equals(o.glowing())) {
+            bits |= 0x40;
         }
-        String u = key.toUpperCase(Locale.ROOT);
-        try {
-            switch (mob) {
-                case SHEEP -> {
-                    DyeColor dye = DyeColor.valueOf(u);
-                    list.add(new EntityData<>(IDX_SHEEP_WOOL, EntityDataTypes.BYTE, (byte) (dye.ordinal() & 0x0F)));
-                }
-                case COW -> {
-                    CowVariant cvv = resolveCow(u);
-                    if (cvv != null) {
-                        list.add(new EntityData<>(IDX_COW_VARIANT, EntityDataTypes.COW_VARIANT, cvv));
-                    }
-                }
-                case CAT -> {
-                    CatVariant cat = resolveCat(u);
-                    if (cat != null) {
-                        list.add(new EntityData<>(IDX_CAT_VARIANT, EntityDataTypes.TYPED_CAT_VARIANT, cat));
-                    }
-                }
-                case WOLF -> {
-                    WolfVariant wv = resolveWolf(u);
-                    if (wv != null) {
-                        list.add(new EntityData<>(IDX_WOLF_VARIANT, EntityDataTypes.TYPED_WOLF_VARIANT, wv));
-                    }
-                }
-                case AXOLOTL -> {
-                    AxolotlVariant av = resolveAxolotl(u);
-                    if (av != null) {
-                        list.add(new EntityData<>(IDX_AXOLOTL_VARIANT, EntityDataTypes.INT, av.getId(cv)));
-                    }
-                }
-                case FROG -> {
-                    FrogVariant fv = resolveFrog(u);
-                    if (fv != null) {
-                        list.add(new EntityData<>(IDX_FROG_VARIANT, EntityDataTypes.TYPED_FROG_VARIANT, fv));
-                    }
-                }
-                case CHICKEN -> {
-                    ChickenVariant ch = resolveChicken(u);
-                    if (ch != null) {
-                        list.add(new EntityData<>(IDX_CHICKEN_VARIANT, EntityDataTypes.CHICKEN_VARIANT, ch));
-                    }
-                }
-                case PIG -> {
-                    PigVariant pv = resolvePig(u);
-                    if (pv != null) {
-                        list.add(new EntityData<>(IDX_PIG_VARIANT, EntityDataTypes.PIG_VARIANT, pv));
-                    }
-                }
-                default -> {
-                }
+        if (Boolean.TRUE.equals(o.sneaking())) {
+            bits |= 0x02;
+        }
+        if (o.burning() == TriState.TRUE) {
+            bits |= 0x01;
+        }
+        list.add(new EntityData<>(IDX_SHARED_FLAGS, EntityDataTypes.BYTE, (byte) (bits & 0xFF)));
+    }
+
+    private static byte sheepWoolByte(MobDisguiseOptions o) {
+        DyeColor dye = o.color() != null ? o.color() : DyeColor.WHITE;
+        byte wool = (byte) (dye.ordinal() & 0x0F);
+        if (Boolean.TRUE.equals(o.sheared())) {
+            wool |= 0x10;
+        }
+        return wool;
+    }
+
+    private static VillagerData villagerData(MobDisguiseOptions o) {
+        VillagerType vt = VillagerTypes.PLAINS;
+        if (o.type() != null) {
+            VillagerType t = VillagerTypes.getByName(o.type().getKey().toString());
+            if (t != null) {
+                vt = t;
             }
-        } catch (IllegalArgumentException ignored) {
         }
+        VillagerProfession vp = VillagerProfessions.NONE;
+        if (o.profession() != null) {
+            VillagerProfession p = VillagerProfessions.getByName(o.profession().getKey().toString());
+            if (p != null) {
+                vp = p;
+            }
+        }
+        return new VillagerData(vt, vp, 1);
+    }
+
+    private static byte horseFamilyFlags(MobDisguiseOptions o) {
+        int f = 0;
+        if (Boolean.TRUE.equals(o.saddled())) {
+            f |= 0x02;
+        }
+        return (byte) (f & 0xFF);
+    }
+
+    private static HorseVariant peHorseColor(Horse.Color c) {
+        if (c == null) {
+            return HorseVariants.BROWN;
+        }
+        return switch (c) {
+            case WHITE -> HorseVariants.WHITE;
+            case CREAMY -> HorseVariants.CREAMY;
+            case CHESTNUT -> HorseVariants.CHESTNUT;
+            case BROWN -> HorseVariants.BROWN;
+            case BLACK -> HorseVariants.BLACK;
+            case GRAY -> HorseVariants.GRAY;
+            case DARK_BROWN -> HorseVariants.DARK_BROWN;
+        };
+    }
+
+    private static EntityPose bukkitPoseToPe(Pose p) {
+        return switch (p) {
+            case STANDING -> EntityPose.STANDING;
+            case FALL_FLYING -> EntityPose.FALL_FLYING;
+            case SLEEPING -> EntityPose.SLEEPING;
+            case SWIMMING -> EntityPose.SWIMMING;
+            case SPIN_ATTACK -> EntityPose.SPIN_ATTACK;
+            case SNEAKING -> EntityPose.CROUCHING;
+            case LONG_JUMPING -> EntityPose.LONG_JUMPING;
+            case DYING -> EntityPose.DYING;
+            case CROAKING -> EntityPose.CROAKING;
+            case USING_TONGUE -> EntityPose.USING_TONGUE;
+            case SITTING -> EntityPose.SITTING;
+            case ROARING -> EntityPose.ROARING;
+            case SNIFFING -> EntityPose.SNIFFING;
+            case EMERGING -> EntityPose.EMERGING;
+            case DIGGING -> EntityPose.DIGGING;
+            case SLIDING -> EntityPose.SLIDING;
+            case SHOOTING -> EntityPose.SHOOTING;
+            case INHALING -> EntityPose.INHALING;
+        };
+    }
+
+    private static String oldEnumName(OldEnum<?> e) {
+        return e.name();
+    }
+
+    private static String registryPathUpper(org.bukkit.Keyed k) {
+        return k.getKey().getKey().toUpperCase(Locale.ROOT).replace('-', '_');
+    }
+
+    private static CowVariant bukkitCowVariant(Cow.Variant v) {
+        return resolveCow(registryPathUpper(v));
     }
 
     private static CowVariant resolveCow(String u) {
-        return switch (u) {
+        String key = u.trim().toUpperCase(Locale.ROOT);
+        return switch (key) {
             case "COLD" -> CowVariants.COLD;
             case "TEMPERATE" -> CowVariants.TEMPERATE;
             case "WARM" -> CowVariants.WARM;
@@ -132,7 +295,8 @@ public final class MobDisguiseSyntheticMetadata {
     }
 
     private static CatVariant resolveCat(String u) {
-        return switch (u) {
+        String key = u.trim().toUpperCase(Locale.ROOT);
+        return switch (key) {
             case "ALL_BLACK" -> CatVariants.ALL_BLACK;
             case "BLACK" -> CatVariants.BLACK;
             case "BRITISH_SHORTHAIR" -> CatVariants.BRITISH_SHORTHAIR;
@@ -149,7 +313,8 @@ public final class MobDisguiseSyntheticMetadata {
     }
 
     private static WolfVariant resolveWolf(String u) {
-        return switch (u) {
+        String key = u.trim().toUpperCase(Locale.ROOT);
+        return switch (key) {
             case "PALE" -> WolfVariants.PALE;
             case "SPOTTED" -> WolfVariants.SPOTTED;
             case "SNOWY" -> WolfVariants.SNOWY;
@@ -163,19 +328,9 @@ public final class MobDisguiseSyntheticMetadata {
         };
     }
 
-    private static AxolotlVariant resolveAxolotl(String u) {
-        return switch (u) {
-            case "LUCY" -> AxolotlVariants.LUCY;
-            case "WILD" -> AxolotlVariants.WILD;
-            case "GOLD" -> AxolotlVariants.GOLD;
-            case "CYAN" -> AxolotlVariants.CYAN;
-            case "BLUE" -> AxolotlVariants.BLUE;
-            default -> null;
-        };
-    }
-
     private static FrogVariant resolveFrog(String u) {
-        return switch (u) {
+        String key = u.trim().toUpperCase(Locale.ROOT);
+        return switch (key) {
             case "TEMPERATE" -> FrogVariants.TEMPERATE;
             case "COLD" -> FrogVariants.COLD;
             case "WARM" -> FrogVariants.WARM;
@@ -184,7 +339,8 @@ public final class MobDisguiseSyntheticMetadata {
     }
 
     private static ChickenVariant resolveChicken(String u) {
-        return switch (u) {
+        String key = u.trim().toUpperCase(Locale.ROOT);
+        return switch (key) {
             case "COLD" -> ChickenVariants.COLD;
             case "TEMPERATE" -> ChickenVariants.TEMPERATE;
             case "WARM" -> ChickenVariants.WARM;
@@ -193,10 +349,23 @@ public final class MobDisguiseSyntheticMetadata {
     }
 
     private static PigVariant resolvePig(String u) {
-        return switch (u) {
+        String key = u.trim().toUpperCase(Locale.ROOT);
+        return switch (key) {
             case "COLD" -> PigVariants.COLD;
             case "TEMPERATE" -> PigVariants.TEMPERATE;
             case "WARM" -> PigVariants.WARM;
+            default -> null;
+        };
+    }
+
+    private static AxolotlVariant resolveAxolotl(String u) {
+        String key = u.trim().toUpperCase(Locale.ROOT);
+        return switch (key) {
+            case "LUCY" -> AxolotlVariants.LUCY;
+            case "WILD" -> AxolotlVariants.WILD;
+            case "GOLD" -> AxolotlVariants.GOLD;
+            case "CYAN" -> AxolotlVariants.CYAN;
+            case "BLUE" -> AxolotlVariants.BLUE;
             default -> null;
         };
     }

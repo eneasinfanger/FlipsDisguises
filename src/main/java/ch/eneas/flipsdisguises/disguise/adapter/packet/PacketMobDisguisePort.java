@@ -210,22 +210,20 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 ClientVersion clientVersion = user.getClientVersion();
                 MobDisguiseOptions disguiseOpts = optionsForEntityId(eid);
                 event.setCancelled(true);
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    PacketWrapper<?> replacement = buildMobSpawnReplacement(
-                        eid,
-                        uuid,
-                        pos,
-                        yaw,
-                        pitch,
-                        bukkitMob,
-                        disguiseOpts,
-                        clientVersion
-                    );
-                    replacement.setServerVersion(serverVersion);
-                    replacement.setClientVersion(clientVersion);
-                    replacement.prepareForSend(user, true);
-                    user.sendPacket(replacement);
-                });
+                PacketWrapper<?> replacement = buildMobSpawnReplacement(
+                    eid,
+                    uuid,
+                    pos,
+                    yaw,
+                    pitch,
+                    bukkitMob,
+                    disguiseOpts,
+                    clientVersion
+                );
+                replacement.setServerVersion(serverVersion);
+                replacement.setClientVersion(clientVersion);
+                replacement.prepareForSend(user, true);
+                user.sendPacket(replacement);
             }
             return;
         }
