@@ -207,7 +207,6 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 float pitch = w.getPitch();
                 User user = event.getUser();
                 ServerVersion serverVersion = event.getServerVersion();
-                ClientVersion clientVersion = user.getClientVersion();
                 MobDisguiseOptions disguiseOpts = optionsForEntityId(eid);
                 event.setCancelled(true);
                 PacketWrapper<?> replacement = buildMobSpawnReplacement(
@@ -217,11 +216,10 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                     yaw,
                     pitch,
                     bukkitMob,
-                    disguiseOpts,
-                    clientVersion
+                    disguiseOpts
                 );
                 replacement.setServerVersion(serverVersion);
-                replacement.setClientVersion(clientVersion);
+                replacement.setClientVersion(user.getClientVersion());
                 replacement.prepareForSend(user, true);
                 user.sendPacket(replacement);
             }
@@ -240,7 +238,6 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 float pitch = w.getPitch();
                 User user = event.getUser();
                 ServerVersion serverVersion = event.getServerVersion();
-                ClientVersion clientVersion = user.getClientVersion();
                 MobDisguiseOptions disguiseOpts = optionsForEntityId(eid);
                 event.setCancelled(true);
                 PacketWrapper<?> replacement = buildMobSpawnReplacement(
@@ -250,11 +247,10 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                     yaw,
                     pitch,
                     bukkitMob,
-                    disguiseOpts,
-                    clientVersion
+                    disguiseOpts
                 );
                 replacement.setServerVersion(serverVersion);
-                replacement.setClientVersion(clientVersion);
+                replacement.setClientVersion(user.getClientVersion());
                 replacement.prepareForSend(user, true);
                 user.sendPacket(replacement);
             }
@@ -432,6 +428,12 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         return out;
     }
 
+    /**
+     * Modern protocol (1.19+) uses a single clientbound add-entity packet for all types; the old
+     * {@code SPAWN_LIVING_ENTITY} packet is not used for new clients. Sending {@link WrapperPlayServerSpawnLivingEntity}
+     * replacements can be ignored, leaving the client with a {@code Player} entity tracker so metadata rewrites then
+     * mismatch (e.g. index 16 byte vs boolean) and viewers see nothing.
+     */
     private static PacketWrapper<?> buildMobSpawnReplacement(
         int entityId,
         UUID uuid,
@@ -439,58 +441,34 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         float yaw,
         float pitch,
         EntityType bukkitMob,
-        MobDisguiseOptions options,
-        ClientVersion clientVersion
+        MobDisguiseOptions options
     ) {
         MobDisguiseOptions opts = options == null ? MobDisguiseOptions.DEFAULT : options;
         com.github.retrooper.packetevents.protocol.entity.type.EntityType peType =
             MobDisguiseEntityMapping.toPacketEntityType(bukkitMob);
-        if (usesSpawnEntityPacket(bukkitMob)) {
-            WrapperPlayServerSpawnEntity se = new WrapperPlayServerSpawnEntity(
-                entityId,
-                Optional.of(uuid),
-                peType,
-                position,
-                pitch,
-                yaw,
-                yaw,
-                0,
-                Optional.of(Vector3d.zero())
-            );
-            if (bukkitMob == EntityType.SLIME || bukkitMob == EntityType.MAGMA_CUBE) {
-                se.setData(slimeOrMagmaSpawnData(bukkitMob, opts));
-            }
-            if (bukkitMob == EntityType.ENDER_DRAGON) {
-                fixEnderDragonSpawnAngles(se);
-            }
-            return se;
-        }
-        WrapperPlayServerSpawnLivingEntity sle = new WrapperPlayServerSpawnLivingEntity(
+        int spawnObjectData = spawnObjectDataField(bukkitMob, opts);
+        WrapperPlayServerSpawnEntity se = new WrapperPlayServerSpawnEntity(
             entityId,
-            uuid,
+            Optional.of(uuid),
             peType,
             position,
-            yaw,
             pitch,
             yaw,
-            Vector3d.zero(),
-            new ArrayList<>(MobDisguiseSyntheticMetadata.fragment(clientVersion, bukkitMob, opts))
+            yaw,
+            spawnObjectData,
+            Optional.of(Vector3d.zero())
         );
         if (bukkitMob == EntityType.ENDER_DRAGON) {
-            fixEnderDragonLivingSpawnAngles(sle);
+            fixEnderDragonSpawnAngles(se);
         }
-        return sle;
+        return se;
     }
 
-    private static int slimeOrMagmaSpawnData(EntityType bukkitMob, MobDisguiseOptions o) {
-        if (bukkitMob != EntityType.SLIME && bukkitMob != EntityType.MAGMA_CUBE) {
-            return 0;
+    private static int spawnObjectDataField(EntityType bukkitMob, MobDisguiseOptions o) {
+        if (bukkitMob == EntityType.SLIME || bukkitMob == EntityType.MAGMA_CUBE) {
+            return o.effectiveSlimeOrMagmaSize();
         }
-        return o.effectiveSlimeOrMagmaSize();
-    }
-
-    private static boolean usesSpawnEntityPacket(EntityType bukkit) {
-        return bukkit == EntityType.ENDER_DRAGON || bukkit == EntityType.SLIME || bukkit == EntityType.MAGMA_CUBE;
+        return 0;
     }
 
     private static ItemStack peItem(org.bukkit.inventory.ItemStack bukkit) {
