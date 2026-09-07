@@ -7,18 +7,24 @@ import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
 import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.exception.PacketProcessException;
+import com.github.retrooper.packetevents.netty.buffer.ByteBufHelper;
 import com.github.retrooper.packetevents.util.Vector3d;
 import com.github.retrooper.packetevents.event.PacketListener;
 import com.github.retrooper.packetevents.event.PacketListenerCommon;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
+import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import com.github.retrooper.packetevents.event.PacketSendEvent;
+import com.github.retrooper.packetevents.protocol.ConnectionState;
 import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.player.User;
+import com.github.retrooper.packetevents.protocol.player.UserProfile;
 import io.github.retrooper.packetevents.util.SpigotConversionUtil;
 import com.github.retrooper.packetevents.protocol.entity.EntityPositionData;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
@@ -29,10 +35,17 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfo;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoUpdate;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnLivingEntity;
+import com.github.retrooper.packetevents.util.EventCreationUtil;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPlayer;
 import io.papermc.paper.event.entity.EntityEquipmentChangedEvent;
+import net.kyori.adventure.text.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
@@ -55,6 +68,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Injectable
 public final class PacketMobDisguisePort implements MobDisguisePort, PacketListener, Listener {
+
+    private static final Logger LOG = LoggerFactory.getLogger(PacketMobDisguisePort.class);
 
     private final PluginMain plugin;
     private final Map<UUID, EntityType> mobTypeByEntityUuid = new ConcurrentHashMap<>();
@@ -143,6 +158,41 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
 
     @Override
     public void syncNewObserver(Player observer) {
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            if (!observer.isOnline()) {
+                return;
+            }
+            List<Player> toRefresh = new ArrayList<>();
+            for (Player disguised : plugin.getServer().getOnlinePlayers()) {
+                if (!mobTypeByEntityUuid.containsKey(disguised.getUniqueId())) {
+                    continue;
+                }
+                if (disguised.getUniqueId().equals(observer.getUniqueId())) {
+                    continue;
+                }
+                if (disguised.getWorld() != observer.getWorld()) {
+                    continue;
+                }
+                if (!disguised.isValid()) {
+                    continue;
+                }
+                toRefresh.add(disguised);
+                int eid = disguised.getEntityId();
+                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(observer, new WrapperPlayServerDestroyEntities(eid));
+            }
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                if (!observer.isOnline()) {
+                    return;
+                }
+                for (Player disguised : toRefresh) {
+                    if (!disguised.isValid()) {
+                        continue;
+                    }
+                    observer.hideEntity(plugin, disguised);
+                    observer.showEntity(plugin, disguised);
+                }
+            }, 2L);
+        }, 1L);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -194,10 +244,48 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     }
 
     @Override
+    public void onPacketReceive(PacketReceiveEvent event) {
+        if (event.getConnectionState() != ConnectionState.PLAY) {
+            return;
+        }
+        MobDisguisePacketTrace.logClientInbound(LOG, plugin, event, "");
+    }
+
+    @Override
     public void onPacketSend(PacketSendEvent event) {
+        if (event.getConnectionState() != ConnectionState.PLAY) {
+            return;
+        }
+        if (MobDisguisePacketTrace.enabled(plugin) && MobDisguisePacketTrace.allPlayTraffic(plugin)) {
+            MobDisguisePacketTrace.logServerOutbound(LOG, plugin, event, "");
+        }
+        if (event.getPacketType() == PacketType.Play.Server.BUNDLE) {
+            if (handleBundleMobDisguise(event)) {
+                return;
+            }
+        }
+        if (event.getPacketType() == PacketType.Play.Server.PLAYER_INFO_UPDATE) {
+            WrapperPlayServerPlayerInfoUpdate tab = new WrapperPlayServerPlayerInfoUpdate(event);
+            if (rewritePlayerInfoUpdateForMobSubjects(tab)) {
+                event.markForReEncode(true);
+                MobDisguisePacketTrace.logServerOutbound(LOG, plugin, event, "mob disguise: PLAYER_INFO_UPDATE display/profile name -> real username");
+            }
+            return;
+        }
+        if (event.getPacketType() == PacketType.Play.Server.PLAYER_INFO) {
+            WrapperPlayServerPlayerInfo tab = new WrapperPlayServerPlayerInfo(event);
+            if (rewriteLegacyPlayerInfoForMobSubjects(tab)) {
+                event.markForReEncode(true);
+                MobDisguisePacketTrace.logServerOutbound(LOG, plugin, event, "mob disguise: PLAYER_INFO display/profile name -> real username");
+            }
+            return;
+        }
         if (event.getPacketType() == PacketType.Play.Server.SPAWN_PLAYER) {
             WrapperPlayServerSpawnPlayer w = new WrapperPlayServerSpawnPlayer(event);
             if (rewriteIfDisguised(w.getEntityId())) {
+                if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
+                    return;
+                }
                 int eid = w.getEntityId();
                 EntityType bukkitMob = bukkitMobType(eid);
                 UUID uuid = w.getUUID();
@@ -208,7 +296,6 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 User user = event.getUser();
                 ServerVersion serverVersion = event.getServerVersion();
                 MobDisguiseOptions disguiseOpts = optionsForEntityId(eid);
-                event.setCancelled(true);
                 PacketWrapper<?> replacement = buildMobSpawnReplacement(
                     eid,
                     uuid,
@@ -220,14 +307,23 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 );
                 replacement.setServerVersion(serverVersion);
                 replacement.setClientVersion(user.getClientVersion());
-                replacement.prepareForSend(user, true);
-                user.sendPacket(replacement);
+                event.setCancelled(true);
+                MobDisguisePacketTrace.logServerOutbound(
+                    LOG,
+                    plugin,
+                    event,
+                    "mob disguise: cancelled SPAWN_PLAYER; postTask mob spawn eid=" + eid + " type=" + bukkitMob
+                );
+                sendReplacementAfterPipeline(event, replacement);
             }
             return;
         }
         if (event.getPacketType() == PacketType.Play.Server.SPAWN_ENTITY) {
             WrapperPlayServerSpawnEntity w = new WrapperPlayServerSpawnEntity(event);
             if (rewriteIfDisguised(w.getEntityId())) {
+                if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
+                    return;
+                }
                 int eid = w.getEntityId();
                 EntityType bukkitMob = bukkitMobType(eid);
                 UUID subjectUuid = disguisedEntityIds.get(eid);
@@ -239,7 +335,6 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 User user = event.getUser();
                 ServerVersion serverVersion = event.getServerVersion();
                 MobDisguiseOptions disguiseOpts = optionsForEntityId(eid);
-                event.setCancelled(true);
                 PacketWrapper<?> replacement = buildMobSpawnReplacement(
                     eid,
                     uuid,
@@ -251,14 +346,23 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 );
                 replacement.setServerVersion(serverVersion);
                 replacement.setClientVersion(user.getClientVersion());
-                replacement.prepareForSend(user, true);
-                user.sendPacket(replacement);
+                event.setCancelled(true);
+                MobDisguisePacketTrace.logServerOutbound(
+                    LOG,
+                    plugin,
+                    event,
+                    "mob disguise: cancelled SPAWN_ENTITY; postTask mob spawn eid=" + eid + " type=" + bukkitMob
+                );
+                sendReplacementAfterPipeline(event, replacement);
             }
             return;
         }
         if (event.getPacketType() == PacketType.Play.Server.SPAWN_LIVING_ENTITY) {
             WrapperPlayServerSpawnLivingEntity w = new WrapperPlayServerSpawnLivingEntity(event);
             if (rewriteIfDisguised(w.getEntityId())) {
+                if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
+                    return;
+                }
                 EntityType bukkitMob = bukkitMobType(w.getEntityId());
                 w.setEntityType(MobDisguiseEntityMapping.toPacketEntityType(bukkitMob));
                 ClientVersion cv = event.getUser().getClientVersion();
@@ -276,19 +380,32 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             WrapperPlayServerEntityMetadata w = new WrapperPlayServerEntityMetadata(event);
             if (rewriteIfDisguised(w.getEntityId())) {
                 int eid = w.getEntityId();
+                if (isOutgoingToDisguisedSubjectSelf(event, eid)) {
+                    return;
+                }
                 EntityType bukkitMob = bukkitMobType(eid);
                 ClientVersion cv = event.getUser().getClientVersion();
                 w.setEntityMetadata(new ArrayList<>(
                     MobDisguiseSyntheticMetadata.fragment(cv, bukkitMob, optionsForEntityId(eid))
                 ));
                 event.markForReEncode(true);
+                MobDisguisePacketTrace.logServerOutbound(
+                    LOG,
+                    plugin,
+                    event,
+                    "mob disguise: ENTITY_METADATA rewrite eid=" + eid + " type=" + bukkitMob
+                );
             }
             return;
         }
         if (event.getPacketType() == PacketType.Play.Server.ENTITY_EQUIPMENT) {
             WrapperPlayServerEntityEquipment w = new WrapperPlayServerEntityEquipment(event);
             if (rewriteIfDisguised(w.getEntityId())) {
-                UUID subjectUuid = disguisedEntityIds.get(w.getEntityId());
+                int eidEq = w.getEntityId();
+                if (isOutgoingToDisguisedSubjectSelf(event, eidEq)) {
+                    return;
+                }
+                UUID subjectUuid = disguisedEntityIds.get(eidEq);
                 EnumMap<EquipmentSlot, ItemStack> slots = equipmentPeByEntityUuid.computeIfAbsent(
                     subjectUuid,
                     u -> new EnumMap<>(EquipmentSlot.class)
@@ -300,7 +417,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                             refreshEquipmentPeFromBukkit(le);
                         }
                     });
-                    event.setCancelled(true);
+                    return;
                 } else {
                     for (Equipment e : w.getEquipment()) {
                         ItemStack it = e.getItem();
@@ -360,6 +477,315 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             return false;
         }
         return mobTypeByEntityUuid.get(subjectUuid) != null;
+    }
+
+    /**
+     * The local client always keeps its own connection entity as a {@code Player}. Rewriting that entity to mob
+     * metadata/spawn would mismatch indices; sending {@code remove_entities} for the real player id breaks the
+     * connection. Skip all disguised-entity rewrites for packets addressed to the disguised subject themselves.
+     */
+    private boolean isOutgoingToDisguisedSubjectSelf(PacketSendEvent event, int entityId) {
+        UUID subjectUuid = disguisedEntityIds.get(entityId);
+        return subjectUuid != null && event.getUser().getUUID().equals(subjectUuid);
+    }
+
+    /**
+     * Delivers via {@code sendPacketSilently(observer, packet)} after
+     * the send pipeline, so the replacement is not re-entrant with the encoder. Falls back to {@link User} when there
+     * is no Bukkit {@link Player} (e.g. non-player pipeline).
+     */
+    private void sendReplacementAfterPipeline(PacketSendEvent event, PacketWrapper<?> replacement) {
+        event.getPostTasks().add(() -> sendSilentlyToObserver(event, replacement));
+    }
+
+    /**
+     * Never pass a Bukkit {@link Player} into {@code ProtocolManager#getUser} — it expects a Netty channel.
+     */
+    private void sendSilentlyToObserver(PacketSendEvent event, Object packetOrBuffer) {
+        if (MobDisguisePacketTrace.enabled(plugin) && packetOrBuffer instanceof PacketWrapper<?> w) {
+            PacketTypeCommon syntheticType = w.getPacketTypeData().getPacketType();
+            LOG.info(
+                "[MobDisguise][POST-PIPELINE SEND] observer={} user={} syntheticType={}",
+                MobDisguisePacketTrace.observerLabel(event),
+                event.getUser().getUUID(),
+                syntheticType == null ? "?" : MobDisguisePacketTrace.typeName(syntheticType)
+            );
+        }
+        Player observer = event.getPlayer();
+        User user = event.getUser();
+        if (observer != null) {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(observer, packetOrBuffer);
+        } else if (packetOrBuffer instanceof PacketWrapper<?> w) {
+            user.sendPacketSilently(w);
+        } else {
+            user.sendPacketSilently(packetOrBuffer);
+        }
+    }
+
+    /**
+     * Paper often wraps entity spawns in {@link PacketType.Play.Server#BUNDLE}; those inner spawns never hit a
+     * top-level {@code SPAWN_*} listener. Parse the bundle on a duplicate buffer, then cancel and re-inject sub-packets
+     * (raw or rewritten) in order, using immediate {@code sendPacketSilently}.
+     */
+    private boolean handleBundleMobDisguise(PacketSendEvent event) {
+        Object buf = event.getByteBuf();
+        if (ByteBufHelper.readableBytes(buf) < 1) {
+            return false;
+        }
+        Object dup = ByteBufHelper.retainedDuplicate(buf);
+        try {
+            int count;
+            try {
+                count = ByteBufHelper.readVarInt(dup);
+            } catch (IndexOutOfBoundsException e) {
+                return false;
+            }
+            if (count < 0 || count > 4096) {
+                return false;
+            }
+            List<Object> outPackets = new ArrayList<>(count);
+            boolean changed = false;
+            for (int i = 0; i < count; i++) {
+                int packetBegin = ByteBufHelper.readerIndex(dup);
+                if (packetBegin >= ByteBufHelper.writerIndex(dup)) {
+                    return false;
+                }
+                Object one = ByteBufHelper.retainedDuplicate(dup);
+                ByteBufHelper.readerIndex(one, packetBegin);
+                final PacketSendEvent subEvent;
+                try {
+                    subEvent = EventCreationUtil.createSendEvent(
+                        event.getChannel(),
+                        event.getUser(),
+                        event.getPlayer(),
+                        one,
+                        true
+                    );
+                } catch (PacketProcessException e) {
+                    ByteBufHelper.release(one);
+                    return false;
+                }
+                PacketTypeCommon subType = subEvent.getPacketType();
+
+                if (subType == PacketType.Play.Server.SPAWN_PLAYER) {
+                    WrapperPlayServerSpawnPlayer w = new WrapperPlayServerSpawnPlayer(subEvent);
+                    int packetEnd = ByteBufHelper.readerIndex(one);
+                    int consumed = packetEnd - packetBegin;
+                    ByteBufHelper.release(one);
+                    ByteBufHelper.readerIndex(dup, packetEnd);
+                    if (rewriteIfDisguised(w.getEntityId())) {
+                        if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
+                            ByteBufHelper.readerIndex(buf, packetBegin);
+                            outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                        } else {
+                            changed = true;
+                            int eid = w.getEntityId();
+                            EntityType bukkitMob = bukkitMobType(eid);
+                            Vector3d p = w.getPosition();
+                            Vector3d pos = new Vector3d(p.getX(), p.getY(), p.getZ());
+                            MobDisguiseOptions disguiseOpts = optionsForEntityId(eid);
+                            PacketWrapper<?> replacement = buildMobSpawnReplacement(
+                                eid,
+                                w.getUUID(),
+                                pos,
+                                w.getYaw(),
+                                w.getPitch(),
+                                bukkitMob,
+                                disguiseOpts
+                            );
+                            replacement.setServerVersion(event.getServerVersion());
+                            replacement.setClientVersion(event.getUser().getClientVersion());
+                            outPackets.add(replacement);
+                        }
+                    } else {
+                        ByteBufHelper.readerIndex(buf, packetBegin);
+                        outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                    }
+                } else if (subType == PacketType.Play.Server.SPAWN_ENTITY) {
+                    WrapperPlayServerSpawnEntity w = new WrapperPlayServerSpawnEntity(subEvent);
+                    int packetEnd = ByteBufHelper.readerIndex(one);
+                    int consumed = packetEnd - packetBegin;
+                    ByteBufHelper.release(one);
+                    ByteBufHelper.readerIndex(dup, packetEnd);
+                    if (rewriteIfDisguised(w.getEntityId())) {
+                        if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
+                            ByteBufHelper.readerIndex(buf, packetBegin);
+                            outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                        } else {
+                            changed = true;
+                            int eid = w.getEntityId();
+                            EntityType bukkitMob = bukkitMobType(eid);
+                            UUID subjectUuid = disguisedEntityIds.get(eid);
+                            UUID uuid = w.getUUID().orElse(subjectUuid);
+                            Vector3d p = w.getPosition();
+                            Vector3d pos = new Vector3d(p.getX(), p.getY(), p.getZ());
+                            MobDisguiseOptions disguiseOpts = optionsForEntityId(eid);
+                            PacketWrapper<?> replacement = buildMobSpawnReplacement(
+                                eid,
+                                uuid,
+                                pos,
+                                w.getYaw(),
+                                w.getPitch(),
+                                bukkitMob,
+                                disguiseOpts
+                            );
+                            replacement.setServerVersion(event.getServerVersion());
+                            replacement.setClientVersion(event.getUser().getClientVersion());
+                            outPackets.add(replacement);
+                        }
+                    } else {
+                        ByteBufHelper.readerIndex(buf, packetBegin);
+                        outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                    }
+                } else if (subType == PacketType.Play.Server.SPAWN_LIVING_ENTITY) {
+                    WrapperPlayServerSpawnLivingEntity w = new WrapperPlayServerSpawnLivingEntity(subEvent);
+                    int packetEnd = ByteBufHelper.readerIndex(one);
+                    int consumed = packetEnd - packetBegin;
+                    ByteBufHelper.release(one);
+                    ByteBufHelper.readerIndex(dup, packetEnd);
+                    if (rewriteIfDisguised(w.getEntityId())) {
+                        if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
+                            ByteBufHelper.readerIndex(buf, packetBegin);
+                            outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                        } else {
+                            changed = true;
+                            EntityType bukkitMob = bukkitMobType(w.getEntityId());
+                            w.setEntityType(MobDisguiseEntityMapping.toPacketEntityType(bukkitMob));
+                            ClientVersion cv = event.getUser().getClientVersion();
+                            w.setEntityMetadata(new ArrayList<>(
+                                MobDisguiseSyntheticMetadata.fragment(cv, bukkitMob, optionsForEntityId(w.getEntityId()))
+                            ));
+                            if (bukkitMob == EntityType.ENDER_DRAGON) {
+                                fixEnderDragonLivingSpawnAngles(w);
+                            }
+                            WrapperPlayServerSpawnLivingEntity copy = new WrapperPlayServerSpawnLivingEntity(
+                                w.getEntityId(),
+                                w.getEntityUUID(),
+                                w.getEntityType(),
+                                w.getPosition(),
+                                w.getYaw(),
+                                w.getPitch(),
+                                w.getHeadPitch(),
+                                w.getVelocity(),
+                                new ArrayList<>(w.getEntityMetadata())
+                            );
+                            copy.setServerVersion(event.getServerVersion());
+                            copy.setClientVersion(event.getUser().getClientVersion());
+                            outPackets.add(copy);
+                        }
+                    } else {
+                        ByteBufHelper.readerIndex(buf, packetBegin);
+                        outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                    }
+                } else if (subType == PacketType.Play.Server.ENTITY_METADATA) {
+                    WrapperPlayServerEntityMetadata w = new WrapperPlayServerEntityMetadata(subEvent);
+                    int packetEnd = ByteBufHelper.readerIndex(one);
+                    int consumed = packetEnd - packetBegin;
+                    ByteBufHelper.release(one);
+                    ByteBufHelper.readerIndex(dup, packetEnd);
+                    if (rewriteIfDisguised(w.getEntityId())) {
+                        if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
+                            ByteBufHelper.readerIndex(buf, packetBegin);
+                            outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                        } else {
+                            changed = true;
+                            int eidMeta = w.getEntityId();
+                            EntityType bukkitMobMeta = bukkitMobType(eidMeta);
+                            ClientVersion cvMeta = event.getUser().getClientVersion();
+                            WrapperPlayServerEntityMetadata metaOut = new WrapperPlayServerEntityMetadata(
+                                eidMeta,
+                                new ArrayList<>(MobDisguiseSyntheticMetadata.fragment(
+                                    cvMeta,
+                                    bukkitMobMeta,
+                                    optionsForEntityId(eidMeta)
+                                ))
+                            );
+                            metaOut.setServerVersion(event.getServerVersion());
+                            metaOut.setClientVersion(cvMeta);
+                            outPackets.add(metaOut);
+                        }
+                    } else {
+                        ByteBufHelper.readerIndex(buf, packetBegin);
+                        outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                    }
+                } else if (subType == PacketType.Play.Server.ENTITY_EQUIPMENT) {
+                    WrapperPlayServerEntityEquipment w = new WrapperPlayServerEntityEquipment(subEvent);
+                    int packetEnd = ByteBufHelper.readerIndex(one);
+                    int consumed = packetEnd - packetBegin;
+                    ByteBufHelper.release(one);
+                    ByteBufHelper.readerIndex(dup, packetEnd);
+                    int eidEq = w.getEntityId();
+                    if (rewriteIfDisguised(eidEq) && !isOutgoingToDisguisedSubjectSelf(event, eidEq)) {
+                        UUID subjectUuidEq = disguisedEntityIds.get(eidEq);
+                        EnumMap<EquipmentSlot, ItemStack> slotsEq = equipmentPeByEntityUuid.get(subjectUuidEq);
+                        if (slotsEq == null || slotsEq.isEmpty()) {
+                            MobDisguisePacketTrace.logServerOutbound(
+                                LOG,
+                                plugin,
+                                event,
+                                "bundle ENTITY_EQUIPMENT eid=" + eidEq + " passthrough (equipment cache empty)"
+                            );
+                            ByteBufHelper.readerIndex(buf, packetBegin);
+                            outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                        } else {
+                            changed = true;
+                            for (Equipment e : w.getEquipment()) {
+                                ItemStack it = e.getItem();
+                                slotsEq.put(e.getSlot(), it == null ? ItemStack.EMPTY : it.copy());
+                            }
+                            WrapperPlayServerEntityEquipment eqOut = new WrapperPlayServerEntityEquipment(
+                                eidEq,
+                                toOrderedEquipmentList(slotsEq)
+                            );
+                            eqOut.setServerVersion(event.getServerVersion());
+                            eqOut.setClientVersion(event.getUser().getClientVersion());
+                            outPackets.add(eqOut);
+                        }
+                    } else {
+                        ByteBufHelper.readerIndex(buf, packetBegin);
+                        outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                    }
+                } else {
+                    Class<? extends PacketWrapper<?>> clazz = subType.getWrapperClass();
+                    if (clazz == null) {
+                        ByteBufHelper.release(one);
+                        return false;
+                    }
+                    try {
+                        clazz.getConstructor(PacketSendEvent.class).newInstance(subEvent);
+                    } catch (ReflectiveOperationException e) {
+                        ByteBufHelper.release(one);
+                        return false;
+                    }
+                    int packetEnd = ByteBufHelper.readerIndex(one);
+                    int consumed = packetEnd - packetBegin;
+                    ByteBufHelper.release(one);
+                    ByteBufHelper.readerIndex(dup, packetEnd);
+                    ByteBufHelper.readerIndex(buf, packetBegin);
+                    outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                }
+            }
+            if (!changed) {
+                return false;
+            }
+            event.setCancelled(true);
+            MobDisguisePacketTrace.logServerOutbound(
+                LOG,
+                plugin,
+                event,
+                "bundle cancelled; resending " + outPackets.size() + " sub-packets (spawn/meta/equipment rewritten for mob disguise)"
+            );
+            event.getPostTasks().add(() -> {
+                for (Object part : outPackets) {
+                    sendSilentlyToObserver(event, part);
+                }
+            });
+            return true;
+        } catch (IndexOutOfBoundsException e) {
+            return false;
+        } finally {
+            ByteBufHelper.release(dup);
+        }
     }
 
     private boolean isEnderDragon(int entityId) {
@@ -539,19 +965,92 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     }
 
     private void refreshEntityTrackers(LivingEntity subject) {
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
             if (!subject.isValid()) {
                 return;
             }
             refreshEquipmentPeFromBukkit(subject);
+            int eid = subject.getEntityId();
             for (Player viewer : subject.getWorld().getPlayers()) {
                 if (viewer.getUniqueId().equals(subject.getUniqueId())) {
                     continue;
                 }
-                viewer.hideEntity(plugin, subject);
-                viewer.showEntity(plugin, subject);
+                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, new WrapperPlayServerDestroyEntities(eid));
             }
-        });
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> resendMobDisguiseToOtherViewers(subject), 2L);
+        }, 1L);
+    }
+
+    /**
+     * Destroys the client entity, waits, then forces a full
+     * resync so rewritten spawn/metadata packets are observed (hide/show retriggers tracker pipeline on Paper).
+     */
+    private void resendMobDisguiseToOtherViewers(LivingEntity subject) {
+        if (!subject.isValid()) {
+            return;
+        }
+        for (Player viewer : subject.getWorld().getPlayers()) {
+            if (viewer.getUniqueId().equals(subject.getUniqueId())) {
+                continue;
+            }
+            viewer.hideEntity(plugin, subject);
+            viewer.showEntity(plugin, subject);
+        }
+    }
+
+    /**
+     * Keep tab list and profile strip text as real usernames while the entity model is rewritten to a mob,
+     * matching expected behaviour when {@code PaperPlayerAppearance} no longer pushes mob labels into the list name.
+     */
+    private boolean rewritePlayerInfoUpdateForMobSubjects(WrapperPlayServerPlayerInfoUpdate packet) {
+        boolean modified = false;
+        for (WrapperPlayServerPlayerInfoUpdate.PlayerInfo entry : packet.getEntries()) {
+            UUID id = entry.getProfileId();
+            UserProfile profile = entry.getGameProfile();
+            if (id == null && profile != null) {
+                id = profile.getUUID();
+            }
+            if (id == null || !mobTypeByEntityUuid.containsKey(id)) {
+                continue;
+            }
+            Player subject = plugin.getServer().getPlayer(id);
+            if (subject == null || !subject.isOnline()) {
+                continue;
+            }
+            String realName = subject.getName();
+            entry.setDisplayName(Component.text(realName));
+            if (profile != null) {
+                profile.setName(realName);
+            }
+            modified = true;
+        }
+        return modified;
+    }
+
+    private boolean rewriteLegacyPlayerInfoForMobSubjects(WrapperPlayServerPlayerInfo packet) {
+        boolean modified = false;
+        for (WrapperPlayServerPlayerInfo.PlayerData data : packet.getPlayerDataList()) {
+            UserProfile profile = data.getUserProfile();
+            if (profile == null) {
+                profile = data.getUser();
+            }
+            if (profile == null) {
+                continue;
+            }
+            UUID id = profile.getUUID();
+            if (!mobTypeByEntityUuid.containsKey(id)) {
+                continue;
+            }
+            Player subject = plugin.getServer().getPlayer(id);
+            if (subject == null || !subject.isOnline()) {
+                continue;
+            }
+            String realName = subject.getName();
+            profile.setName(realName);
+            data.setDisplayName(Component.text(realName));
+            modified = true;
+        }
+        return modified;
     }
 
 }
