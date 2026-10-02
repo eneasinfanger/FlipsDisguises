@@ -65,6 +65,7 @@ public final class DisguiseService {
     public void forget(UUID playerId) {
         originalsByPlayer.remove(playerId);
         mobDisguise.detachDisconnected(playerId);
+        mobDisguise.clearSpoofedPlayerName(playerId);
     }
 
     public DisguiseResult undisguise(Player target) {
@@ -78,6 +79,7 @@ public final class DisguiseService {
         if (mobDisguise.isMobDisguised(target.getUniqueId())) {
             mobDisguise.detach((LivingEntity) target);
         }
+        mobDisguise.clearSpoofedPlayerName(target.getUniqueId());
         appearance.restore(target, original, true);
         LOG.info("Disguise removed for {}", target.getUniqueId());
         return DisguiseResult.ok();
@@ -381,6 +383,7 @@ public final class DisguiseService {
                 }
                 prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_PLAYER);
                 String shown = skin.getDisplayName().isBlank() ? requestedName.trim() : skin.getDisplayName();
+                mobDisguise.setSpoofedPlayerName(target.getUniqueId(), shown);
                 appearance.applyImpersonation(target, skin, shown);
                 LOG.info(
                     "Applied disguise for {} as '{}' (skin source {})",
@@ -398,6 +401,7 @@ public final class DisguiseService {
     }
 
     private void prepareSubjectForNewDisguise(Player target, DisguiseSwitchMode mode) {
+        mobDisguise.clearSpoofedPlayerName(target.getUniqueId());
         boolean wasMob = mobDisguise.isMobDisguised(target.getUniqueId());
         if (wasMob && mode == DisguiseSwitchMode.TO_MOB) {
             mobDisguise.detachDecoyOnly((LivingEntity) target);

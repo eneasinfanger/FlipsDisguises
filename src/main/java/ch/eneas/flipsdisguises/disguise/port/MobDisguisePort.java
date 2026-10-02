@@ -24,4 +24,14 @@ public interface MobDisguisePort {
     void detachDisconnected(UUID entityUuid);
 
     void syncNewObserver(Player observer);
+
+    /**
+     * Spoofs the profile/display name sent in player-info packets for a player disguise, so other viewers
+     * see the disguise name in the tab list and on the overhead nameplate.
+     */
+    default void setSpoofedPlayerName(UUID playerUuid, String spoofedName) {
+    }
+
+    default void clearSpoofedPlayerName(UUID playerUuid) {
+    }
 }

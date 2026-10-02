@@ -75,6 +75,8 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     private final Map<UUID, EntityType> mobTypeByEntityUuid = new ConcurrentHashMap<>();
     private final Map<UUID, MobDisguiseOptions> mobOptionsByEntityUuid = new ConcurrentHashMap<>();
     private final Map<Integer, UUID> disguisedEntityIds = new ConcurrentHashMap<>();
+    /** Player-disguise name spoofing for player-info packets (tab list + overhead nameplate). */
+    private final Map<UUID, String> spoofedNameByPlayerUuid = new ConcurrentHashMap<>();
     /**
      * Last-known PE items per equipment slot. Outgoing {@code ENTITY_EQUIPMENT} is often a delta; merging it fixes
      * wrong hands (stale Bukkit snapshots) and matches the server's authoritative item stacks.
@@ -177,8 +179,6 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                     continue;
                 }
                 toRefresh.add(disguised);
-                int eid = disguised.getEntityId();
-                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(observer, new WrapperPlayServerDestroyEntities(eid));
             }
             plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
                 if (!observer.isOnline()) {
@@ -188,11 +188,32 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                     if (!disguised.isValid()) {
                         continue;
                     }
-                    observer.hideEntity(plugin, disguised);
-                    observer.showEntity(plugin, disguised);
+                    EntityType bukkitMob = mobTypeByEntityUuid.get(disguised.getUniqueId());
+                    if (bukkitMob == null) {
+                        continue;
+                    }
+                    MobDisguiseOptions opts = mobOptionsByEntityUuid.getOrDefault(
+                        disguised.getUniqueId(),
+                        MobDisguiseOptions.DEFAULT
+                    );
+                    sendExplicitMobDisguiseSpawn(observer, disguised, disguised.getEntityId(), bukkitMob, opts);
                 }
             }, 2L);
         }, 1L);
+    }
+
+    @Override
+    public void setSpoofedPlayerName(UUID playerUuid, String spoofedName) {
+        if (spoofedName == null || spoofedName.isBlank()) {
+            spoofedNameByPlayerUuid.remove(playerUuid);
+        } else {
+            spoofedNameByPlayerUuid.put(playerUuid, spoofedName);
+        }
+    }
+
+    @Override
+    public void clearSpoofedPlayerName(UUID playerUuid) {
+        spoofedNameByPlayerUuid.remove(playerUuid);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -266,17 +287,17 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         }
         if (event.getPacketType() == PacketType.Play.Server.PLAYER_INFO_UPDATE) {
             WrapperPlayServerPlayerInfoUpdate tab = new WrapperPlayServerPlayerInfoUpdate(event);
-            if (rewritePlayerInfoUpdateForMobSubjects(tab)) {
+            if (rewritePlayerInfoUpdateForMobSubjects(tab, event.getUser().getUUID())) {
                 event.markForReEncode(true);
-                MobDisguisePacketTrace.logServerOutbound(LOG, plugin, event, "mob disguise: PLAYER_INFO_UPDATE display/profile name -> real username");
+                MobDisguisePacketTrace.logServerOutbound(LOG, plugin, event, "disguise: PLAYER_INFO_UPDATE name rewrite");
             }
             return;
         }
         if (event.getPacketType() == PacketType.Play.Server.PLAYER_INFO) {
             WrapperPlayServerPlayerInfo tab = new WrapperPlayServerPlayerInfo(event);
-            if (rewriteLegacyPlayerInfoForMobSubjects(tab)) {
+            if (rewriteLegacyPlayerInfoForMobSubjects(tab, event.getUser().getUUID())) {
                 event.markForReEncode(true);
-                MobDisguisePacketTrace.logServerOutbound(LOG, plugin, event, "mob disguise: PLAYER_INFO display/profile name -> real username");
+                MobDisguisePacketTrace.logServerOutbound(LOG, plugin, event, "disguise: PLAYER_INFO name rewrite");
             }
             return;
         }
@@ -984,25 +1005,84 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     /**
      * Destroys the client entity, waits, then forces a full
      * resync so rewritten spawn/metadata packets are observed (hide/show retriggers tracker pipeline on Paper).
+     * Additionally sends the mob spawn replacement, metadata and equipment explicitly, because relying on the
+     * re-track pipeline alone can leave viewers with no entity at all (player/entity vanishes completely).
      */
     private void resendMobDisguiseToOtherViewers(LivingEntity subject) {
         if (!subject.isValid()) {
             return;
         }
+        UUID sid = subject.getUniqueId();
+        EntityType bukkitMob = mobTypeByEntityUuid.get(sid);
+        if (bukkitMob == null) {
+            return;
+        }
+        MobDisguiseOptions opts = mobOptionsByEntityUuid.getOrDefault(sid, MobDisguiseOptions.DEFAULT);
+        int eid = subject.getEntityId();
         for (Player viewer : subject.getWorld().getPlayers()) {
             if (viewer.getUniqueId().equals(subject.getUniqueId())) {
                 continue;
             }
-            viewer.hideEntity(plugin, subject);
-            viewer.showEntity(plugin, subject);
+            sendExplicitMobDisguiseSpawn(viewer, subject, eid, bukkitMob, opts);
+        }
+    }
+
+    /**
+     * Deterministic disguise delivery: destroy the real client-side entity, then send the mob spawn, metadata and
+     * equipment packets directly. Guarantees viewers see the disguise even if the tracker respawn is lost or
+     * rewritten inconsistently (fixes players/entities vanishing for all observers). No hide/show: the tracker
+     * keeps streaming movement/metadata for the real entity id, which the packet listener rewrites to the mob.
+     */
+    private void sendExplicitMobDisguiseSpawn(
+        Player viewer,
+        LivingEntity subject,
+        int eid,
+        EntityType bukkitMob,
+        MobDisguiseOptions opts
+    ) {
+        User user = PacketEvents.getAPI().getPlayerManager().getUser(viewer);
+        if (user == null) {
+            return;
+        }
+        Vector3d pos = new Vector3d(subject.getX(), subject.getY(), subject.getZ());
+        PacketWrapper<?> spawn = buildMobSpawnReplacement(
+            eid,
+            subject.getUniqueId(),
+            pos,
+            subject.getYaw(),
+            subject.getPitch(),
+            bukkitMob,
+            opts
+        );
+        spawn.setServerVersion(PacketEvents.getAPI().getServerManager().getVersion());
+        spawn.setClientVersion(user.getClientVersion());
+
+        ClientVersion cv = user.getClientVersion();
+        WrapperPlayServerEntityMetadata metadata = new WrapperPlayServerEntityMetadata(
+            eid,
+            new ArrayList<>(MobDisguiseSyntheticMetadata.fragment(cv, bukkitMob, opts))
+        );
+
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, new WrapperPlayServerDestroyEntities(eid));
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, spawn);
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, metadata);
+
+        EnumMap<EquipmentSlot, ItemStack> slots = equipmentPeByEntityUuid.get(subject.getUniqueId());
+        if (slots != null && !slots.isEmpty()) {
+            WrapperPlayServerEntityEquipment equipment = new WrapperPlayServerEntityEquipment(
+                eid,
+                toOrderedEquipmentList(slots)
+            );
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, equipment);
         }
     }
 
     /**
      * Keep tab list and profile strip text as real usernames while the entity model is rewritten to a mob,
      * matching expected behaviour when {@code PaperPlayerAppearance} no longer pushes mob labels into the list name.
+     * For player disguises, spoof the profile/display name so viewers see the disguise name in tab and overhead.
      */
-    private boolean rewritePlayerInfoUpdateForMobSubjects(WrapperPlayServerPlayerInfoUpdate packet) {
+    private boolean rewritePlayerInfoUpdateForMobSubjects(WrapperPlayServerPlayerInfoUpdate packet, UUID viewerUuid) {
         boolean modified = false;
         for (WrapperPlayServerPlayerInfoUpdate.PlayerInfo entry : packet.getEntries()) {
             UUID id = entry.getProfileId();
@@ -1010,24 +1090,36 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             if (id == null && profile != null) {
                 id = profile.getUUID();
             }
-            if (id == null || !mobTypeByEntityUuid.containsKey(id)) {
+            if (id == null) {
                 continue;
             }
-            Player subject = plugin.getServer().getPlayer(id);
-            if (subject == null || !subject.isOnline()) {
-                continue;
+            if (mobTypeByEntityUuid.containsKey(id)) {
+                Player subject = plugin.getServer().getPlayer(id);
+                if (subject == null || !subject.isOnline()) {
+                    continue;
+                }
+                String realName = subject.getName();
+                entry.setDisplayName(Component.text(realName));
+                if (profile != null) {
+                    profile.setName(realName);
+                }
+                modified = true;
+            } else if (viewerUuid != null && !viewerUuid.equals(id)) {
+                String spoofed = spoofedNameByPlayerUuid.get(id);
+                if (spoofed == null) {
+                    continue;
+                }
+                entry.setDisplayName(Component.text(spoofed));
+                if (profile != null) {
+                    profile.setName(spoofed.length() > 16 ? spoofed.substring(0, 16) : spoofed);
+                }
+                modified = true;
             }
-            String realName = subject.getName();
-            entry.setDisplayName(Component.text(realName));
-            if (profile != null) {
-                profile.setName(realName);
-            }
-            modified = true;
         }
         return modified;
     }
 
-    private boolean rewriteLegacyPlayerInfoForMobSubjects(WrapperPlayServerPlayerInfo packet) {
+    private boolean rewriteLegacyPlayerInfoForMobSubjects(WrapperPlayServerPlayerInfo packet, UUID viewerUuid) {
         boolean modified = false;
         for (WrapperPlayServerPlayerInfo.PlayerData data : packet.getPlayerDataList()) {
             UserProfile profile = data.getUserProfile();
@@ -1038,17 +1130,24 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 continue;
             }
             UUID id = profile.getUUID();
-            if (!mobTypeByEntityUuid.containsKey(id)) {
-                continue;
+            if (mobTypeByEntityUuid.containsKey(id)) {
+                Player subject = plugin.getServer().getPlayer(id);
+                if (subject == null || !subject.isOnline()) {
+                    continue;
+                }
+                String realName = subject.getName();
+                profile.setName(realName);
+                data.setDisplayName(Component.text(realName));
+                modified = true;
+            } else if (viewerUuid != null && !viewerUuid.equals(id)) {
+                String spoofed = spoofedNameByPlayerUuid.get(id);
+                if (spoofed == null) {
+                    continue;
+                }
+                profile.setName(spoofed.length() > 16 ? spoofed.substring(0, 16) : spoofed);
+                data.setDisplayName(Component.text(spoofed));
+                modified = true;
             }
-            Player subject = plugin.getServer().getPlayer(id);
-            if (subject == null || !subject.isOnline()) {
-                continue;
-            }
-            String realName = subject.getName();
-            profile.setName(realName);
-            data.setDisplayName(Component.text(realName));
-            modified = true;
         }
         return modified;
     }
