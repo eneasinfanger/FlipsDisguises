@@ -26,6 +26,13 @@ public class MobDisguiseOptions {
     @ValidFor(categories = LIVING)
     @ArgType(BooleanArgument.class)
     private Boolean glowing;
+    /**
+     * Client-side-only decoy mob shown to the disguised player in third person. {@code false} disables the
+     * decoy (the player just stays invisible to themselves); {@code null}/{@code true} keeps it enabled.
+     */
+    @ValidFor(categories = LIVING)
+    @ArgType(BooleanArgument.class)
+    private Boolean selfDecoy;
     @ValidFor(categories = ALL)
     @ArgType(ChatComponentArgument.class)
     private Component displayName;

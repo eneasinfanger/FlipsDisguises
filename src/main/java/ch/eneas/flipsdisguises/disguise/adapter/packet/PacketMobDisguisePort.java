@@ -49,6 +49,7 @@ import com.github.retrooper.packetevents.util.EventCreationUtil;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPlayer;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerFlying;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientInteractEntity;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPosition;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPositionAndRotation;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerRotation;
@@ -297,7 +298,33 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             return;
         }
         MobDisguisePacketTrace.logClientInbound(LOG, plugin, event, "");
+        swallowSelfDecoyInteraction(event);
         mirrorSelfDecoyOnMovement(event);
+    }
+
+    /**
+     * The decoy only exists on the subject's client, so interact/attack packets aimed at its id are
+     * meaningless server-side (unknown entity). Drop them so no other packet listener/plugin sees a
+     * phantom entity id. Note: the vanilla client will not offer block break/place while the crosshair
+     * rests on the decoy's hitbox — that ray trace happens fully client-side and cannot be disabled
+     * for a mob entity; use the {@code selfDecoy} option to turn the decoy off if that is a problem.
+     */
+    private void swallowSelfDecoyInteraction(PacketReceiveEvent event) {
+        if (event.getPacketType() != PacketType.Play.Client.INTERACT_ENTITY) {
+            return;
+        }
+        UUID subjectUuid = event.getUser().getUUID();
+        Integer decoyId = decoyIdBySubjectUuid.get(subjectUuid);
+        if (decoyId == null) {
+            return;
+        }
+        try {
+            WrapperPlayClientInteractEntity w = new WrapperPlayClientInteractEntity(event);
+            if (w.getEntityId() == decoyId) {
+                event.setCancelled(true);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     /**
@@ -382,6 +409,13 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         if (bukkitMob == null) {
             return;
         }
+        MobDisguiseOptions opts = mobOptionsByEntityUuid.getOrDefault(sid, MobDisguiseOptions.DEFAULT);
+        if (Boolean.FALSE.equals(opts.selfDecoy())) {
+            // Decoy disabled via option/API: the player just stays invisible to themselves.
+            destroySelfDecoy(sid);
+            sendSelfInvisibility(player, true);
+            return;
+        }
         destroySelfDecoy(sid);
         User user = PacketEvents.getAPI().getPlayerManager().getUser(player);
         if (user == null) {
@@ -397,7 +431,6 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         decoyIdBySubjectUuid.put(sid, decoyId);
         decoyUuidBySubjectUuid.put(sid, decoyUuid);
 
-        MobDisguiseOptions opts = mobOptionsByEntityUuid.getOrDefault(sid, MobDisguiseOptions.DEFAULT);
         Vector3d pos = new Vector3d(subject.getX(), subject.getY(), subject.getZ());
         PacketWrapper<?> spawn = buildMobSpawnReplacement(
             decoyId, decoyUuid, pos, subject.getYaw(), subject.getPitch(), bukkitMob, opts
@@ -1011,7 +1044,39 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                     ByteBufHelper.release(one);
                     ByteBufHelper.readerIndex(dup, packetEnd);
                     int eidEq = w.getEntityId();
-                    if (rewriteIfDisguised(eidEq) && !isOutgoingToDisguisedSubjectSelf(event, eidEq)) {
+                    if (rewriteIfDisguised(eidEq) && isOutgoingToDisguisedSubjectSelf(event, eidEq)) {
+                        changed = true;
+                        UUID selfUuid = disguisedEntityIds.get(eidEq);
+                        EnumMap<EquipmentSlot, ItemStack> selfSlots = equipmentPeByEntityUuid.computeIfAbsent(
+                            selfUuid,
+                            u -> new EnumMap<>(EquipmentSlot.class)
+                        );
+                        for (Equipment e : w.getEquipment()) {
+                            ItemStack it = e.getItem();
+                            selfSlots.put(e.getSlot(), it == null ? ItemStack.EMPTY : it.copy());
+                        }
+                        // Invisible entities still render armor/held items; strip self equipment so the
+                        // disguised player sees only the decoy in third person.
+                        List<Equipment> empty = new ArrayList<>(EQUIPMENT_WRITE_ORDER.size());
+                        for (EquipmentSlot s : EQUIPMENT_WRITE_ORDER) {
+                            empty.add(new Equipment(s, ItemStack.EMPTY));
+                        }
+                        WrapperPlayServerEntityEquipment eqOut = new WrapperPlayServerEntityEquipment(eidEq, empty);
+                        eqOut.setServerVersion(event.getServerVersion());
+                        eqOut.setClientVersion(event.getUser().getClientVersion());
+                        outPackets.add(eqOut);
+                        Integer decoyId = decoyIdBySubjectUuid.get(selfUuid);
+                        Player selfPlayer = event.getPlayer();
+                        if (decoyId != null && selfPlayer != null) {
+                            WrapperPlayServerEntityEquipment decoyEq = new WrapperPlayServerEntityEquipment(
+                                decoyId,
+                                toOrderedEquipmentList(selfSlots)
+                            );
+                            decoyEq.setServerVersion(event.getServerVersion());
+                            decoyEq.setClientVersion(event.getUser().getClientVersion());
+                            outPackets.add(decoyEq);
+                        }
+                    } else if (rewriteIfDisguised(eidEq)) {
                         UUID subjectUuidEq = disguisedEntityIds.get(eidEq);
                         EnumMap<EquipmentSlot, ItemStack> slotsEq = equipmentPeByEntityUuid.get(subjectUuidEq);
                         if (slotsEq == null || slotsEq.isEmpty()) {
