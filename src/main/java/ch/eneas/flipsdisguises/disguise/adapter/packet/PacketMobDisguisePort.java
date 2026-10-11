@@ -42,6 +42,10 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSp
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnLivingEntity;
 import com.github.retrooper.packetevents.util.EventCreationUtil;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPlayer;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerFlying;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPosition;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPositionAndRotation;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerRotation;
 import io.papermc.paper.event.entity.EntityEquipmentChangedEvent;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
@@ -65,6 +69,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Injectable
 public final class PacketMobDisguisePort implements MobDisguisePort, PacketListener, Listener {
@@ -77,6 +82,13 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     private final Map<Integer, UUID> disguisedEntityIds = new ConcurrentHashMap<>();
     /** Player-disguise name spoofing for player-info packets (tab list + overhead nameplate). */
     private final Map<UUID, String> spoofedNameByPlayerUuid = new ConcurrentHashMap<>();
+    /**
+     * Client-side-only decoy mob per disguised player so the subject sees their own disguise in third person.
+     * The decoy is never sent to other viewers and never registered in {@link #disguisedEntityIds}, so
+     * behaviour for everyone else is unchanged. Ids are chosen far above the server's entity id counter.
+     */
+    private final Map<UUID, Integer> decoyIdBySubjectUuid = new ConcurrentHashMap<>();
+    private final Map<UUID, UUID> decoyUuidBySubjectUuid = new ConcurrentHashMap<>();
     /**
      * Last-known PE items per equipment slot. Outgoing {@code ENTITY_EQUIPMENT} is often a delta; merging it fixes
      * wrong hands (stale Bukkit snapshots) and matches the server's authoritative item stacks.
@@ -129,10 +141,14 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             plugin.getServer().getScheduler().runTask(plugin, () -> refreshEquipmentPeFromBukkit(subject));
         }
         refreshEntityTrackers(subject);
+        if (subject instanceof Player) {
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> spawnSelfDecoy(subject), 3L);
+        }
     }
 
     @Override
     public void detach(LivingEntity subject) {
+        destroySelfDecoy(subject.getUniqueId());
         UUID sid = subject.getUniqueId();
         mobTypeByEntityUuid.remove(sid);
         mobOptionsByEntityUuid.remove(sid);
@@ -143,6 +159,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
 
     @Override
     public void detachDecoyOnly(LivingEntity subject) {
+        destroySelfDecoy(subject.getUniqueId());
         UUID sid = subject.getUniqueId();
         mobTypeByEntityUuid.remove(sid);
         mobOptionsByEntityUuid.remove(sid);
@@ -152,6 +169,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
 
     @Override
     public void detachDisconnected(UUID entityUuid) {
+        destroySelfDecoy(entityUuid);
         mobTypeByEntityUuid.remove(entityUuid);
         mobOptionsByEntityUuid.remove(entityUuid);
         equipmentPeByEntityUuid.remove(entityUuid);
@@ -224,6 +242,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 syncEntityId(p);
                 refreshEquipmentPeFromBukkit(p);
                 refreshEntityTrackers(p);
+                spawnSelfDecoy(p);
             }
         });
     }
@@ -244,6 +263,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 syncEntityId(p);
                 refreshEquipmentPeFromBukkit(p);
                 refreshEntityTrackers(p);
+                spawnSelfDecoy(p);
             });
         }
     }
@@ -270,6 +290,140 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             return;
         }
         MobDisguisePacketTrace.logClientInbound(LOG, plugin, event, "");
+        mirrorSelfDecoyOnMovement(event);
+    }
+
+    /**
+     * The client's own movement is authoritative, so mirror the decoy onto serverbound movement packets.
+     * The decoy is only known to the subject's own client; this keeps it glued to the real player position.
+     */
+    private void mirrorSelfDecoyOnMovement(PacketReceiveEvent event) {
+        PacketTypeCommon type = event.getPacketType();
+        boolean posPacket = type == PacketType.Play.Client.PLAYER_POSITION
+            || type == PacketType.Play.Client.PLAYER_POSITION_AND_ROTATION;
+        boolean rotPacket = type == PacketType.Play.Client.PLAYER_ROTATION
+            || type == PacketType.Play.Client.PLAYER_POSITION_AND_ROTATION;
+        boolean flyingOnly = type == PacketType.Play.Client.PLAYER_FLYING;
+        if (!posPacket && !rotPacket && !flyingOnly) {
+            return;
+        }
+        UUID subjectUuid = event.getUser().getUUID();
+        Integer decoyId = decoyIdBySubjectUuid.get(subjectUuid);
+        if (decoyId == null || flyingOnly) {
+            return;
+        }
+        Vector3d pos = null;
+        Float yaw = null;
+        Float pitch = null;
+        boolean onGround = false;
+        try {
+            if (type == PacketType.Play.Client.PLAYER_POSITION_AND_ROTATION) {
+                WrapperPlayClientPlayerPositionAndRotation w = new WrapperPlayClientPlayerPositionAndRotation(event);
+                pos = w.getPosition();
+                yaw = w.getYaw();
+                pitch = w.getPitch();
+                onGround = w.isOnGround();
+            } else if (type == PacketType.Play.Client.PLAYER_POSITION) {
+                WrapperPlayClientPlayerPosition w = new WrapperPlayClientPlayerPosition(event);
+                pos = w.getPosition();
+                onGround = w.isOnGround();
+            } else if (type == PacketType.Play.Client.PLAYER_ROTATION) {
+                WrapperPlayClientPlayerRotation w = new WrapperPlayClientPlayerRotation(event);
+                yaw = w.getYaw();
+                pitch = w.getPitch();
+                onGround = w.isOnGround();
+            }
+        } catch (Throwable t) {
+            return;
+        }
+        if (pos == null && yaw == null) {
+            return;
+        }
+        Player subject = plugin.getServer().getPlayer(subjectUuid);
+        if (subject == null || !subject.isOnline()) {
+            return;
+        }
+        double x = pos != null ? pos.getX() : subject.getX();
+        double y = pos != null ? pos.getY() : subject.getY();
+        double z = pos != null ? pos.getZ() : subject.getZ();
+        float yv = yaw != null ? yaw : subject.getYaw();
+        float pv = pitch != null ? pitch : subject.getPitch();
+        EntityType bukkitMob = mobTypeByEntityUuid.get(subjectUuid);
+        WrapperPlayServerEntityTeleport teleport = new WrapperPlayServerEntityTeleport(
+            decoyId, new Vector3d(x, y, z), yv, pv, onGround
+        );
+        if (bukkitMob == EntityType.ENDER_DRAGON) {
+            fixEnderDragonYawPitch(teleport.getYaw(), teleport.getPitch(), teleport::setYaw, teleport::setPitch);
+        }
+        User user = event.getUser();
+        user.sendPacketSilently(teleport);
+        float headYaw = bukkitMob == EntityType.ENDER_DRAGON ? wrapDegrees180(yv + 180f) : yv;
+        user.sendPacketSilently(new WrapperPlayServerEntityHeadLook(decoyId, headYaw));
+    }
+
+    /**
+     * Spawns a client-side-only mob at the subject's position, visible only to the subject, so they see their
+     * own disguise in third person. Never registered in {@link #disguisedEntityIds}; the high random id keeps
+     * it clear of the server's entity id counter.
+     */
+    private void spawnSelfDecoy(LivingEntity subject) {
+        if (!(subject instanceof Player player) || !subject.isValid()) {
+            return;
+        }
+        UUID sid = subject.getUniqueId();
+        EntityType bukkitMob = mobTypeByEntityUuid.get(sid);
+        if (bukkitMob == null) {
+            return;
+        }
+        destroySelfDecoy(sid);
+        User user = PacketEvents.getAPI().getPlayerManager().getUser(player);
+        if (user == null) {
+            return;
+        }
+        int decoyId;
+        do {
+            decoyId = 1_500_000_000 + ThreadLocalRandom.current().nextInt(500_000_000);
+        } while (decoyId == subject.getEntityId()
+            || disguisedEntityIds.containsKey(decoyId)
+            || decoyIdBySubjectUuid.containsValue(decoyId));
+        UUID decoyUuid = UUID.randomUUID();
+        decoyIdBySubjectUuid.put(sid, decoyId);
+        decoyUuidBySubjectUuid.put(sid, decoyUuid);
+
+        MobDisguiseOptions opts = mobOptionsByEntityUuid.getOrDefault(sid, MobDisguiseOptions.DEFAULT);
+        Vector3d pos = new Vector3d(subject.getX(), subject.getY(), subject.getZ());
+        PacketWrapper<?> spawn = buildMobSpawnReplacement(
+            decoyId, decoyUuid, pos, subject.getYaw(), subject.getPitch(), bukkitMob, opts
+        );
+        spawn.setServerVersion(PacketEvents.getAPI().getServerManager().getVersion());
+        spawn.setClientVersion(user.getClientVersion());
+        WrapperPlayServerEntityMetadata metadata = new WrapperPlayServerEntityMetadata(
+            decoyId,
+            new ArrayList<>(MobDisguiseSyntheticMetadata.fragment(user.getClientVersion(), bukkitMob, opts))
+        );
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(player, spawn);
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(player, metadata);
+        EnumMap<EquipmentSlot, ItemStack> slots = equipmentPeByEntityUuid.get(sid);
+        if (slots != null && !slots.isEmpty()) {
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(
+                player, new WrapperPlayServerEntityEquipment(decoyId, toOrderedEquipmentList(slots))
+            );
+        }
+    }
+
+    private void destroySelfDecoy(UUID subjectUuid) {
+        Integer decoyId = decoyIdBySubjectUuid.remove(subjectUuid);
+        decoyUuidBySubjectUuid.remove(subjectUuid);
+        if (decoyId == null) {
+            return;
+        }
+        Player subject = plugin.getServer().getPlayer(subjectUuid);
+        if (subject == null || !subject.isOnline()) {
+            return;
+        }
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(
+            subject, new WrapperPlayServerDestroyEntities(decoyId)
+        );
     }
 
     @Override

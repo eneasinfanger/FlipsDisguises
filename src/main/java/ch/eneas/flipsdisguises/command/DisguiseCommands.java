@@ -15,6 +15,7 @@ import dev.jorel.commandapi.ExecutableCommand;
 import dev.jorel.commandapi.executors.CommandArguments;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
@@ -55,14 +56,17 @@ public final class DisguiseCommands implements CommandRegister {
                     .orElseGet(() -> sender instanceof Player p ? p : null);
                 if (target == null) {
                     sender.sendMessage(Component.text(
-                        "Specify a player target (console) or run as a player (self).",
-                        NamedTextColor.RED
+                        "Usage: /disguise mob <target> <mobType> [--flags] (as console, target is required)",
+                        NamedTextColor.YELLOW
                     ));
                     return;
                 }
                 EntityType type = args.getUnchecked("mobType");
                 if (type == null) {
-                    sender.sendMessage(Component.text("Unknown entity type name.", NamedTextColor.RED));
+                    sender.sendMessage(Component.text(
+                        "Unknown mob type. Usage: /disguise mob <target> <mobType> [--flags]",
+                        NamedTextColor.YELLOW
+                    ));
                     return;
                 }
                 if (!MobDisguiseEntityMapping.isSupported(type)) {
@@ -91,7 +95,10 @@ public final class DisguiseCommands implements CommandRegister {
                 Collection<Entity> selected = (Collection<Entity>) args.getUnchecked("entities");
                 EntityType type = args.getUnchecked("mobType");
                 if (type == null) {
-                    sender.sendMessage(Component.text("Unknown entity type name.", NamedTextColor.RED));
+                    sender.sendMessage(Component.text(
+                        "Unknown mob type. Usage: /disguise entity <entities> <mobType> [--flags]",
+                        NamedTextColor.YELLOW
+                    ));
                     return;
                 }
                 if (!MobDisguiseEntityMapping.isSupported(type)) {
@@ -112,7 +119,10 @@ public final class DisguiseCommands implements CommandRegister {
                     }
                 }
                 if (living.isEmpty() && nonLiving == 0) {
-                    sender.sendMessage(Component.text("No entities matched.", NamedTextColor.RED));
+                    sender.sendMessage(Component.text(
+                        "No entities matched. Usage: /disguise entity <entities> <mobType> [--flags]",
+                        NamedTextColor.YELLOW
+                    ));
                     return;
                 }
                 final int skippedSelections = nonLiving;
@@ -139,34 +149,70 @@ public final class DisguiseCommands implements CommandRegister {
 
     private CommandAPICommand buildDisguiseCommand() {
         return new CommandAPICommand("disguise")
-            .withSubcommand(new CommandAPICommand("as")
-                .withPermission("flipsdisguises.disguise.player")
-                .withArguments(new StringArgument("playerName"))
-                .executes((CommandSender sender, CommandArguments args) -> {
-                    if (!(sender instanceof Player player)) {
-                        sender.sendMessage(Component.text("Only players can use /disguise as.", NamedTextColor.RED));
-                        return;
-                    }
-                    String name = (String) args.getUnchecked("playerName");
-                    disguiseService.disguiseAsNamedPlayer(player, player, name).thenAccept(result ->
-                        plugin.getServer().getScheduler().runTask(plugin, () -> reply(player, result)));
-                }))
-            .withSubcommand(new CommandAPICommand("player")
-                .withPermission("flipsdisguises.disguise.player")
-                .withArguments(new EntitySelectorArgument.OnePlayer("target"), new StringArgument("playerName"))
-                .executes((CommandSender sender, CommandArguments args) -> {
-                    Player target = (Player) args.getUnchecked("target");
-                    String skin = (String) args.getUnchecked("playerName");
-                    disguiseService.disguiseAsNamedPlayer(sender, target, skin).thenAccept(result ->
-                        plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
-                }))
+            .withSubcommand(buildPlayerSubcommand())
             .withSubcommand(buildMobSubcommand())
             .withSubcommand(buildEntityMobSubcommand())
             .executes((CommandSender sender, CommandArguments args) ->
-                sender.sendMessage(Component.text(
-                    "Usage: /disguise as <playerName> | /disguise player <target> <playerName> | /disguise mob <target> <mobType> [--flags] | /disguise entity <entities> <mobType> [--flags]. Flags: --size <1-127> (slime/magma/phantom), --name <MiniMessage>, --variant <TYPE_SPECIFIC>",
-                    NamedTextColor.YELLOW
-                )));
+                sendUsage(sender));
+    }
+
+    /**
+     * Single player-disguise entry point: {@code /disguise player <name>} disguises yourself,
+     * {@code /disguise player <target> <name>} disguises another player. One code path for both.
+     */
+    private CommandAPICommand buildPlayerSubcommand() {
+        return new CommandAPICommand("player")
+            .withPermission("flipsdisguises.disguise.player")
+            .withArguments(new GreedyStringArgument("args"))
+            .executes((CommandSender sender, CommandArguments args) -> {
+                String raw = ((String) args.getUnchecked("args")).trim();
+                String[] tokens = raw.split("\\s+");
+                Player target;
+                String skinName;
+                if (tokens.length == 1) {
+                    if (!(sender instanceof Player p)) {
+                        sender.sendMessage(Component.text(
+                            "Console must specify a target: /disguise player <target> <name>",
+                            NamedTextColor.RED
+                        ));
+                        return;
+                    }
+                    target = p;
+                    skinName = tokens[0];
+                } else if (tokens.length == 2) {
+                    target = Bukkit.getPlayerExact(tokens[0]);
+                    if (target == null) {
+                        sender.sendMessage(Component.text(
+                            "Player '" + tokens[0] + "' is not online.",
+                            NamedTextColor.RED
+                        ));
+                        return;
+                    }
+                    skinName = tokens[1];
+                } else {
+                    sender.sendMessage(Component.text(
+                        "Usage: /disguise player <name> or /disguise player <target> <name>",
+                        NamedTextColor.YELLOW
+                    ));
+                    return;
+                }
+                disguiseService.disguiseAsNamedPlayer(sender, target, skinName).thenAccept(result ->
+                    plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
+            });
+    }
+
+    private static void sendUsage(CommandSender sender) {
+        sender.sendMessage(Component.text("Disguise usage:", NamedTextColor.YELLOW));
+        sender.sendMessage(Component.text("  /disguise player <name> — disguise yourself as a player", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  /disguise player <target> <name> — disguise another player", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  /disguise mob <target> <mobType> [--flags] — disguise a player as a mob", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  /disguise entity <entities> <mobType> [--flags] — disguise entities as a mob", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  /undisguise [target] — remove a player disguise", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  /undisguise entity <entities> — remove entity disguises", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text(
+            "Flags: --size <1-127> (slime/magma/phantom), --name <MiniMessage>, --variant <TYPE_SPECIFIC>",
+            NamedTextColor.DARK_GRAY
+        ));
     }
 
     private CommandAPICommand buildUndisguiseCommand() {
@@ -221,7 +267,10 @@ public final class DisguiseCommands implements CommandRegister {
                     .map(Player.class::cast)
                     .orElseGet(() -> sender instanceof Player p ? p : null);
                 if (target == null) {
-                    sender.sendMessage(Component.text("Specify a player.", NamedTextColor.RED));
+                    sender.sendMessage(Component.text(
+                        "Usage: /undisguise [target] or /undisguise entity <entities>",
+                        NamedTextColor.YELLOW
+                    ));
                     return;
                 }
                 reply(sender, disguiseService.undisguise(target));
