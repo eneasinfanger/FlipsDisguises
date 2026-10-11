@@ -22,11 +22,16 @@ import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.protocol.player.UserProfile;
 import io.github.retrooper.packetevents.util.SpigotConversionUtil;
 import com.github.retrooper.packetevents.protocol.entity.EntityPositionData;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityHeadLook;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
@@ -42,12 +47,14 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSp
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnLivingEntity;
 import com.github.retrooper.packetevents.util.EventCreationUtil;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPlayer;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerFlying;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPosition;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPositionAndRotation;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerRotation;
 import io.papermc.paper.event.entity.EntityEquipmentChangedEvent;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.bukkit.entity.Entity;
@@ -409,11 +416,13 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 player, new WrapperPlayServerEntityEquipment(decoyId, toOrderedEquipmentList(slots))
             );
         }
+        sendSelfInvisibility(player, true);
+        sendSelfDecoyTeam(player, decoyUuid, true);
     }
 
     private void destroySelfDecoy(UUID subjectUuid) {
         Integer decoyId = decoyIdBySubjectUuid.remove(subjectUuid);
-        decoyUuidBySubjectUuid.remove(subjectUuid);
+        UUID decoyUuid = decoyUuidBySubjectUuid.remove(subjectUuid);
         if (decoyId == null) {
             return;
         }
@@ -424,6 +433,77 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         PacketEvents.getAPI().getPlayerManager().sendPacketSilently(
             subject, new WrapperPlayServerDestroyEntities(decoyId)
         );
+        sendSelfInvisibility(subject, false);
+        if (decoyUuid != null) {
+            sendSelfDecoyTeam(subject, decoyUuid, false);
+        }
+    }
+
+    /** Entity metadata index 0 bit marking an entity invisible; applied to the subject's own entity id client-side. */
+    private static final byte SELF_INVISIBLE_FLAG = 0x20;
+    /** Packet-only scoreboard team (per subject) used to disable client-side pushing between player and decoy. */
+    private static final String SELF_DECOY_TEAM = "fd_selfdecoy";
+
+    /**
+     * Forces the invisible bit into an outgoing {@code ENTITY_METADATA} addressed to the disguised subject for
+     * their own entity id, so the client never renders the real player model/armor/held items while a decoy
+     * is shown. Without this, any genuine metadata update (sneak, fire, sprint) would clear the flag again.
+     */
+    private static void forceSelfInvisible(WrapperPlayServerEntityMetadata w) {
+        forceSelfInvisible(w.getEntityMetadata());
+    }
+
+    private static void forceSelfInvisible(List<EntityData<?>> data) {
+        for (EntityData<?> d : data) {
+            if (d.getIndex() == 0 && d.getValue() instanceof Byte b) {
+                @SuppressWarnings("unchecked")
+                EntityData<Byte> byteData = (EntityData<Byte>) d;
+                byteData.setValue((byte) (b | SELF_INVISIBLE_FLAG));
+                return;
+            }
+        }
+        data.add(new EntityData<>(0, EntityDataTypes.BYTE, SELF_INVISIBLE_FLAG));
+    }
+
+    private void sendSelfInvisibility(Player subject, boolean invisible) {
+        WrapperPlayServerEntityMetadata meta = new WrapperPlayServerEntityMetadata(
+            subject.getEntityId(),
+            List.of(new EntityData<>(0, EntityDataTypes.BYTE, invisible ? SELF_INVISIBLE_FLAG : (byte) 0))
+        );
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(subject, meta);
+    }
+
+    /**
+     * Creates (or removes) a client-side-only scoreboard team containing the subject and the decoy with
+     * {@code collisionRule=NEVER}, so the decoy's client-side bounding box does not push the local player.
+     */
+    private void sendSelfDecoyTeam(Player subject, UUID decoyUuid, boolean create) {
+        WrapperPlayServerTeams packet;
+        if (create) {
+            WrapperPlayServerTeams.ScoreBoardTeamInfo info = new WrapperPlayServerTeams.ScoreBoardTeamInfo(
+                Component.empty(),
+                Component.empty(),
+                Component.empty(),
+                WrapperPlayServerTeams.NameTagVisibility.NEVER,
+                WrapperPlayServerTeams.CollisionRule.NEVER,
+                NamedTextColor.WHITE,
+                WrapperPlayServerTeams.OptionData.NONE
+            );
+            packet = new WrapperPlayServerTeams(
+                SELF_DECOY_TEAM,
+                WrapperPlayServerTeams.TeamMode.CREATE,
+                Optional.of(info),
+                List.of(subject.getName(), decoyUuid.toString())
+            );
+        } else {
+            packet = new WrapperPlayServerTeams(
+                SELF_DECOY_TEAM,
+                WrapperPlayServerTeams.TeamMode.REMOVE,
+                Optional.empty(),
+                List.of()
+            );
+        }
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(subject, packet);
     }
 
     @Override
@@ -556,6 +636,8 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             if (rewriteIfDisguised(w.getEntityId())) {
                 int eid = w.getEntityId();
                 if (isOutgoingToDisguisedSubjectSelf(event, eid)) {
+                    forceSelfInvisible(w);
+                    event.markForReEncode(true);
                     return;
                 }
                 EntityType bukkitMob = bukkitMobType(eid);
@@ -578,6 +660,31 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             if (rewriteIfDisguised(w.getEntityId())) {
                 int eidEq = w.getEntityId();
                 if (isOutgoingToDisguisedSubjectSelf(event, eidEq)) {
+                    UUID selfUuid = disguisedEntityIds.get(eidEq);
+                    EnumMap<EquipmentSlot, ItemStack> selfSlots = equipmentPeByEntityUuid.computeIfAbsent(
+                        selfUuid,
+                        u -> new EnumMap<>(EquipmentSlot.class)
+                    );
+                    for (Equipment e : w.getEquipment()) {
+                        ItemStack it = e.getItem();
+                        selfSlots.put(e.getSlot(), it == null ? ItemStack.EMPTY : it.copy());
+                    }
+                    // Invisible entities still render armor/held items; strip self equipment so the
+                    // disguised player sees only the decoy in third person. First-person hand is unaffected.
+                    List<Equipment> empty = new ArrayList<>(EQUIPMENT_WRITE_ORDER.size());
+                    for (EquipmentSlot s : EQUIPMENT_WRITE_ORDER) {
+                        empty.add(new Equipment(s, ItemStack.EMPTY));
+                    }
+                    w.setEquipment(empty);
+                    event.markForReEncode(true);
+                    Integer decoyId = decoyIdBySubjectUuid.get(selfUuid);
+                    Player selfPlayer = event.getPlayer();
+                    if (decoyId != null && selfPlayer != null) {
+                        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(
+                            selfPlayer,
+                            new WrapperPlayServerEntityEquipment(decoyId, toOrderedEquipmentList(selfSlots))
+                        );
+                    }
                     return;
                 }
                 UUID subjectUuid = disguisedEntityIds.get(eidEq);
@@ -750,8 +857,15 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                     ByteBufHelper.readerIndex(dup, packetEnd);
                     if (rewriteIfDisguised(w.getEntityId())) {
                         if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
-                            ByteBufHelper.readerIndex(buf, packetBegin);
-                            outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                            changed = true;
+                            forceSelfInvisible(w.getEntityMetadata());
+                            WrapperPlayServerEntityMetadata metaOut = new WrapperPlayServerEntityMetadata(
+                                w.getEntityId(),
+                                new ArrayList<>(w.getEntityMetadata())
+                            );
+                            metaOut.setServerVersion(event.getServerVersion());
+                            metaOut.setClientVersion(event.getUser().getClientVersion());
+                            outPackets.add(metaOut);
                         } else {
                             changed = true;
                             int eid = w.getEntityId();
@@ -860,8 +974,15 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                     ByteBufHelper.readerIndex(dup, packetEnd);
                     if (rewriteIfDisguised(w.getEntityId())) {
                         if (isOutgoingToDisguisedSubjectSelf(event, w.getEntityId())) {
-                            ByteBufHelper.readerIndex(buf, packetBegin);
-                            outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                            changed = true;
+                            forceSelfInvisible(w);
+                            WrapperPlayServerEntityMetadata selfMeta = new WrapperPlayServerEntityMetadata(
+                                w.getEntityId(),
+                                new ArrayList<>(w.getEntityMetadata())
+                            );
+                            selfMeta.setServerVersion(event.getServerVersion());
+                            selfMeta.setClientVersion(event.getUser().getClientVersion());
+                            outPackets.add(selfMeta);
                         } else {
                             changed = true;
                             int eidMeta = w.getEntityId();
