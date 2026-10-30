@@ -3,7 +3,6 @@ package ch.eneas.flipsdisguises.disguise.application;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
 import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
-import ch.eneas.flipsdisguises.edition.ProductEdition;
 import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
 import org.bukkit.entity.Player;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,8 +33,6 @@ class DisguiseServiceTest {
     @Mock
     private MobDisguisePort mobDisguise;
     @Mock
-    private ProductEdition edition;
-    @Mock
     private Player target;
 
     @BeforeEach
@@ -45,8 +42,6 @@ class DisguiseServiceTest {
             invocation.getArgument(0, Runnable.class).run();
             return null;
         }).when(syncTasks).runSync(any());
-        lenient().when(edition.disguiseCommandsEnabled()).thenReturn(true);
-        lenient().when(edition.programmaticDisguiseApiEnabled()).thenReturn(true);
         lenient().when(mobDisguise.isMobDisguised(any())).thenReturn(false);
         lenient().when(target.getUniqueId()).thenReturn(UUID.randomUUID());
         lenient().when(target.isOnline()).thenReturn(true);
@@ -54,27 +49,17 @@ class DisguiseServiceTest {
 
     @Test
     void undisguiseWithoutPriorStateFails() {
-        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, edition);
+        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise);
         DisguiseResult r = svc.undisguise(target);
         assertInstanceOf(DisguiseResult.Failure.class, r);
         verifyNoInteractions(appearance);
     }
 
     @Test
-    void disguiseCommandsRespectsEditionOff() {
-        when(edition.disguiseCommandsEnabled()).thenReturn(false);
-        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, edition);
-        Player initiator = mock(Player.class);
-        DisguiseResult r = svc.disguiseAsNamedPlayer(initiator, target, "test").join();
-        assertInstanceOf(DisguiseResult.Failure.class, r);
-        verifyNoInteractions(skins);
-    }
-
-    @Test
     void rateLimitBlocksSecondCommand() {
         when(syncTasks.rateLimitMillis()).thenReturn(60_000L);
         when(skins.resolveUsername(any())).thenReturn(new CompletableFuture<>());
-        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, edition);
+        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise);
         Player initiator = mock(Player.class);
         when(initiator.getUniqueId()).thenReturn(UUID.randomUUID());
         svc.disguiseAsNamedPlayer(initiator, target, "first");

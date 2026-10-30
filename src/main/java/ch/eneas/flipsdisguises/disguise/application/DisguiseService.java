@@ -9,7 +9,6 @@ import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
 import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
-import ch.eneas.flipsdisguises.edition.ProductEdition;
 import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -35,7 +34,6 @@ public final class DisguiseService {
     private final SkinCatalog skins;
     private final PlayerAppearancePort appearance;
     private final MobDisguisePort mobDisguise;
-    private final ProductEdition edition;
     private final Map<UUID, PlayerLookBackup> originalsByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastActionByInitiator = new ConcurrentHashMap<>();
 
@@ -44,14 +42,12 @@ public final class DisguiseService {
         SyncTaskRunner syncTasks,
         SkinCatalog skins,
         PlayerAppearancePort appearance,
-        MobDisguisePort mobDisguise,
-        ProductEdition edition
+        MobDisguisePort mobDisguise
     ) {
         this.syncTasks = syncTasks;
         this.skins = skins;
         this.appearance = appearance;
         this.mobDisguise = mobDisguise;
-        this.edition = edition;
     }
 
     public boolean isDisguised(UUID playerId) {
@@ -69,9 +65,6 @@ public final class DisguiseService {
     }
 
     public DisguiseResult undisguise(Player target) {
-        if (!edition.disguiseCommandsEnabled() && !edition.programmaticDisguiseApiEnabled()) {
-            return DisguiseResult.failure(Component.text("Disguises are disabled.", NamedTextColor.RED));
-        }
         PlayerLookBackup original = originalsByPlayer.remove(target.getUniqueId());
         if (original == null) {
             return DisguiseResult.failure(Component.text("Nothing to restore.", NamedTextColor.GRAY));
@@ -86,11 +79,6 @@ public final class DisguiseService {
     }
 
     public CompletableFuture<DisguiseResult> disguiseAsNamedPlayer(CommandSender initiator, Player target, String skinOwner) {
-        if (!edition.disguiseCommandsEnabled()) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Disguise commands are disabled.", NamedTextColor.RED))
-            );
-        }
         if (initiator instanceof Player p && !rateAllowed(p.getUniqueId())) {
             return CompletableFuture.completedFuture(
                 DisguiseResult.failure(Component.text("Slow down.", NamedTextColor.RED))
@@ -109,11 +97,6 @@ public final class DisguiseService {
     }
 
     public CompletableFuture<DisguiseResult> disguiseAsNamedPlayerApi(Player target, String skinOwner) {
-        if (!edition.programmaticDisguiseApiEnabled()) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("API disguises are disabled.", NamedTextColor.RED))
-            );
-        }
         String owner = skinOwner.trim();
         if (owner.isEmpty()) {
             return CompletableFuture.completedFuture(
@@ -136,11 +119,6 @@ public final class DisguiseService {
         EntityType type,
         MobDisguiseOptions options
     ) {
-        if (!edition.disguiseCommandsEnabled()) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Disguise commands are disabled.", NamedTextColor.RED))
-            );
-        }
         if (initiator instanceof Player p && !rateAllowed(p.getUniqueId())) {
             return CompletableFuture.completedFuture(
                 DisguiseResult.failure(Component.text("Slow down.", NamedTextColor.RED))
@@ -184,11 +162,6 @@ public final class DisguiseService {
     }
 
     public CompletableFuture<DisguiseResult> disguiseAsMobApi(Player target, EntityType type, MobDisguiseOptions options) {
-        if (!edition.programmaticDisguiseApiEnabled()) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("API disguises are disabled.", NamedTextColor.RED))
-            );
-        }
         if (!MobDisguiseEntityMapping.isSupported(type)) {
             return CompletableFuture.completedFuture(
                 DisguiseResult.failure(Component.text(
@@ -232,11 +205,6 @@ public final class DisguiseService {
         EntityType type,
         MobDisguiseOptions options
     ) {
-        if (!edition.disguiseCommandsEnabled()) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Disguise commands are disabled.", NamedTextColor.RED))
-            );
-        }
         if (initiator instanceof Player p && !rateAllowed(p.getUniqueId())) {
             return CompletableFuture.completedFuture(
                 DisguiseResult.failure(Component.text("Slow down.", NamedTextColor.RED))
@@ -287,9 +255,6 @@ public final class DisguiseService {
         EntityType type,
         MobDisguiseOptions options
     ) {
-        if (!edition.disguiseCommandsEnabled()) {
-            return CompletableFuture.completedFuture(new int[] {0, targets.size()});
-        }
         if (initiator instanceof Player p && !rateAllowed(p.getUniqueId())) {
             return CompletableFuture.completedFuture(new int[] {0, targets.size()});
         }
@@ -329,11 +294,6 @@ public final class DisguiseService {
     }
 
     public CompletableFuture<DisguiseResult> disguiseLivingAsMobApi(LivingEntity target, EntityType type, MobDisguiseOptions options) {
-        if (!edition.programmaticDisguiseApiEnabled()) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("API disguises are disabled.", NamedTextColor.RED))
-            );
-        }
         if (!MobDisguiseEntityMapping.isSupported(type)) {
             return CompletableFuture.completedFuture(
                 DisguiseResult.failure(Component.text(
@@ -362,9 +322,6 @@ public final class DisguiseService {
     }
 
     public DisguiseResult undisguiseLivingMob(LivingEntity target) {
-        if (!edition.disguiseCommandsEnabled() && !edition.programmaticDisguiseApiEnabled()) {
-            return DisguiseResult.failure(Component.text("Disguises are disabled.", NamedTextColor.RED));
-        }
         if (!mobDisguise.isMobDisguised(target.getUniqueId())) {
             return DisguiseResult.failure(Component.text("That entity has no mob disguise.", NamedTextColor.GRAY));
         }
