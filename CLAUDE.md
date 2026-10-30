@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FlipsDisguises is a Paper (Minecraft 1.21.10, Java 21) plugin that lets players be disguised either as
 another player's skin, or as a mob via raw packet rewriting. It exposes both in-game commands and a
-programmatic API for other plugins.
+programmatic API for other plugins. Although a Git repository is connected, its history is not useful, 
+so you must not read commit history, check the repository status, or commit any changes.
 
 ## Build & Test
 
