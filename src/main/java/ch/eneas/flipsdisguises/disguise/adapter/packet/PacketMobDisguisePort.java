@@ -27,6 +27,9 @@ import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
+import com.github.retrooper.packetevents.protocol.sound.Sound;
+import com.github.retrooper.packetevents.protocol.sound.StaticSound;
+import com.github.retrooper.packetevents.resources.ResourceLocation;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
 import com.github.retrooper.packetevents.protocol.player.EquipmentSlot;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
@@ -38,6 +41,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityPositionSync;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMoveAndRotation;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntitySoundEffect;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
 import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
@@ -744,6 +748,17 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             }
             return;
         }
+        if (event.getPacketType() == PacketType.Play.Server.ENTITY_SOUND_EFFECT) {
+            WrapperPlayServerEntitySoundEffect w = new WrapperPlayServerEntitySoundEffect(event);
+            if (rewriteIfDisguised(w.getEntityId())) {
+                Sound mapped = mapDisguiseSound(w.getSound(), bukkitMobType(w.getEntityId()));
+                if (mapped != null) {
+                    w.setSound(mapped);
+                    event.markForReEncode(true);
+                }
+            }
+            return;
+        }
         if (event.getPacketType() == PacketType.Play.Server.ENTITY_TELEPORT) {
             WrapperPlayServerEntityTeleport w = new WrapperPlayServerEntityTeleport(event);
             if (rewriteIfDisguised(w.getEntityId()) && isEnderDragon(w.getEntityId())) {
@@ -1106,6 +1121,35 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                         ByteBufHelper.readerIndex(buf, packetBegin);
                         outPackets.add(ByteBufHelper.readSlice(buf, consumed));
                     }
+                } else if (subType == PacketType.Play.Server.ENTITY_SOUND_EFFECT) {
+                    WrapperPlayServerEntitySoundEffect w = new WrapperPlayServerEntitySoundEffect(subEvent);
+                    int packetEnd = ByteBufHelper.readerIndex(one);
+                    int consumed = packetEnd - packetBegin;
+                    ByteBufHelper.release(one);
+                    ByteBufHelper.readerIndex(dup, packetEnd);
+                    if (rewriteIfDisguised(w.getEntityId())) {
+                        Sound mapped = mapDisguiseSound(w.getSound(), bukkitMobType(w.getEntityId()));
+                        if (mapped != null) {
+                            changed = true;
+                            WrapperPlayServerEntitySoundEffect soundOut = new WrapperPlayServerEntitySoundEffect(
+                                mapped,
+                                w.getSoundCategory(),
+                                w.getEntityId(),
+                                w.getVolume(),
+                                w.getPitch(),
+                                w.getSeed()
+                            );
+                            soundOut.setServerVersion(event.getServerVersion());
+                            soundOut.setClientVersion(event.getUser().getClientVersion());
+                            outPackets.add(soundOut);
+                        } else {
+                            ByteBufHelper.readerIndex(buf, packetBegin);
+                            outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                        }
+                    } else {
+                        ByteBufHelper.readerIndex(buf, packetBegin);
+                        outPackets.add(ByteBufHelper.readSlice(buf, consumed));
+                    }
                 } else {
                     Class<? extends PacketWrapper<?>> clazz = subType.getWrapperClass();
                     if (clazz == null) {
@@ -1306,6 +1350,46 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             throw new IllegalStateException("No bukkit mob type for entity " + entityId);
         }
         return bukkit;
+    }
+
+    /**
+     * Replaces entity-bound sounds (ambient, hurt, death) of a disguised entity with the disguise mob's
+     * counterpart: {@code entity.<type>.<suffix>} where suffix is ambient/hurt/death based on the original sound.
+     * Sounds from the real subject's sounds (e.g. player hurt) are played as the mob's.
+     */
+    private Sound mapDisguiseSound(Sound original, EntityType bukkitMob) {
+        String name = original.getSoundId().toString();
+        if (name.startsWith("minecraft:")) {
+            name = name.substring("minecraft:".length());
+        }
+        if (!name.startsWith("entity.")) {
+            return null;
+        }
+        String suffix = null;
+        if (name.endsWith(".hurt")) {
+            suffix = "hurt";
+        } else if (name.endsWith(".death")) {
+            suffix = "death";
+        } else if (name.endsWith(".ambient")) {
+            suffix = "ambient";
+        } else if (name.endsWith(".say")) {
+            suffix = "ambient";
+        } else if (name.endsWith(".idle")) {
+            suffix = "ambient";
+        }
+        if (suffix == null) {
+            return null;
+        }
+        String mobKey = bukkitMob.getKey().getKey();
+        String mappedKey = "entity." + mobKey + "." + suffix;
+        if (mappedKey.equals(name)) {
+            return null;
+        }
+        // Avoid remapping when the disguise mob equals source sound (already correct)
+        if (name.equals(mappedKey)) {
+            return null;
+        }
+        return new StaticSound(new ResourceLocation("minecraft", mappedKey), null);
     }
 
     private MobDisguiseOptions optionsForEntityId(int entityId) {
