@@ -5,6 +5,8 @@ import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
 import ch.eneas.flipsdisguises.disguise.domain.PlayerLookBackup;
 import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
+import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
+import ch.eneas.flipsdisguises.disguise.port.DisguiseStore;
 import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
@@ -21,6 +23,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,7 +37,9 @@ public final class DisguiseService {
     private final SkinCatalog skins;
     private final PlayerAppearancePort appearance;
     private final MobDisguisePort mobDisguise;
+    private final DisguiseStore store;
     private final Map<UUID, PlayerLookBackup> originalsByPlayer = new ConcurrentHashMap<>();
+    private final Map<UUID, StoredDisguise> activeByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastActionByInitiator = new ConcurrentHashMap<>();
 
     @Inject
@@ -42,12 +47,14 @@ public final class DisguiseService {
         SyncTaskRunner syncTasks,
         SkinCatalog skins,
         PlayerAppearancePort appearance,
-        MobDisguisePort mobDisguise
+        MobDisguisePort mobDisguise,
+        DisguiseStore store
     ) {
         this.syncTasks = syncTasks;
         this.skins = skins;
         this.appearance = appearance;
         this.mobDisguise = mobDisguise;
+        this.store = store;
     }
 
     public boolean isDisguised(UUID playerId) {
@@ -58,10 +65,96 @@ public final class DisguiseService {
         return mobDisguise.isMobDisguised(entityUuid);
     }
 
+    /**
+     * Drops the in-memory state of a player who left. The persisted disguise is deliberately kept so it can be
+     * re-applied by {@link #restorePersisted(Player)} on the next join.
+     */
     public void forget(UUID playerId) {
         originalsByPlayer.remove(playerId);
+        activeByPlayer.remove(playerId);
         mobDisguise.detachDisconnected(playerId);
         mobDisguise.clearSpoofedPlayerName(playerId);
+    }
+
+    /**
+     * Re-applies the disguise saved for this player, if any. Must run on the main thread with the player online.
+     */
+    public void restorePersisted(Player player) {
+        UUID id = player.getUniqueId();
+        if (!player.isOnline() || originalsByPlayer.containsKey(id)) {
+            return;
+        }
+        Optional<StoredDisguise> loaded = store.load(player);
+        if (loaded.isEmpty()) {
+            return;
+        }
+        StoredDisguise stored = loaded.get();
+        try {
+            // The saved player data may already carry the disguise's custom name, so only the live skin is taken
+            // from a fresh capture; the name fields come from what was recorded before the disguise was applied.
+            PlayerLookBackup fresh = appearance.capture(player);
+            PlayerLookBackup saved = stored.original();
+            PlayerLookBackup original = new PlayerLookBackup(
+                fresh.getSkin(),
+                saved.getDisplayPlainOrNull(),
+                saved.getListPlainOrNull(),
+                saved.getCustomNamePlainOrNull(),
+                saved.isCustomNameVisibleBefore()
+            );
+            originalsByPlayer.put(id, original);
+            StoredDisguise active = stored.withOriginal(original);
+            activeByPlayer.put(id, active);
+            applyLabels(player, active);
+            if (active.kind() == StoredDisguise.Kind.MOB) {
+                mobDisguise.attach((LivingEntity) player, active.mobType(), active.options());
+            }
+            LOG.info("Restored saved {} disguise for {}", active.kind(), id);
+        } catch (Exception ex) {
+            originalsByPlayer.remove(id);
+            activeByPlayer.remove(id);
+            LOG.error("Failed to restore saved disguise for {}", id, ex);
+        }
+    }
+
+    /**
+     * Respawning creates a new player entity, which may come back without the disguise's names/profile.
+     */
+    public void reapplyAfterRespawn(Player player) {
+        StoredDisguise active = activeByPlayer.get(player.getUniqueId());
+        if (active == null || !player.isOnline()) {
+            return;
+        }
+        try {
+            applyLabels(player, active);
+        } catch (Exception ex) {
+            LOG.error("Failed to re-apply disguise labels after respawn for {}", player.getUniqueId(), ex);
+        }
+    }
+
+    private void applyLabels(Player player, StoredDisguise d) {
+        if (d.kind() == StoredDisguise.Kind.MOB) {
+            if (d.options().displayName() != null) {
+                appearance.applyMobLabels(player, d.mobType(), d.options().displayName());
+            } else {
+                appearance.applyMobLabels(player, d.mobType());
+            }
+        } else {
+            mobDisguise.setSpoofedPlayerName(player.getUniqueId(), d.shownName());
+            appearance.applyImpersonation(player, d.skin(), d.shownName());
+        }
+    }
+
+    private void rememberMob(Player target, EntityType type, MobDisguiseOptions options) {
+        remember(target, StoredDisguise.mob(type, options, originalsByPlayer.get(target.getUniqueId())));
+    }
+
+    private void remember(Player target, StoredDisguise disguise) {
+        activeByPlayer.put(target.getUniqueId(), disguise);
+        try {
+            store.save(target, disguise);
+        } catch (Exception ex) {
+            LOG.error("Failed to persist disguise for {}", target.getUniqueId(), ex);
+        }
     }
 
     public DisguiseResult undisguise(Player target) {
@@ -69,6 +162,8 @@ public final class DisguiseService {
         if (original == null) {
             return DisguiseResult.failure(Component.text("Nothing to restore.", NamedTextColor.GRAY));
         }
+        activeByPlayer.remove(target.getUniqueId());
+        store.clear(target);
         if (mobDisguise.isMobDisguised(target.getUniqueId())) {
             mobDisguise.detach((LivingEntity) target);
         }
@@ -147,6 +242,7 @@ public final class DisguiseService {
                     appearance.applyMobLabels(target, type);
                 }
                 mobDisguise.attach((LivingEntity) target, type, opts);
+                rememberMob(target, type, opts);
                 LOG.info("Applied mob disguise for {} as {}", target.getUniqueId(), type);
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
@@ -185,6 +281,7 @@ public final class DisguiseService {
                     appearance.applyMobLabels(target, type);
                 }
                 mobDisguise.attach((LivingEntity) target, type, opts);
+                rememberMob(target, type, opts);
                 LOG.info("Applied mob disguise (API) for {} as {}", target.getUniqueId(), type);
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
@@ -232,6 +329,7 @@ public final class DisguiseService {
                     return;
                 }
                 mobDisguise.attach(target, type, opts);
+                persistLivingMob(target, type, opts);
                 LOG.info("Applied entity mob disguise for {} ({}) as {}", target.getUniqueId(), target.getType(), type);
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
@@ -277,6 +375,7 @@ public final class DisguiseService {
                 }
                 try {
                     mobDisguise.attach(le, type, opts);
+                    persistLivingMob(le, type, opts);
                     ok++;
                     LOG.info("Applied entity mob disguise for {} ({}) as {}", le.getUniqueId(), le.getType(), type);
                 } catch (Exception ex) {
@@ -311,6 +410,7 @@ public final class DisguiseService {
                     return;
                 }
                 mobDisguise.attach(target, type, opts);
+                persistLivingMob(target, type, opts);
                 LOG.info("Applied entity mob disguise (API) for {} as {}", target.getUniqueId(), type);
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
@@ -326,8 +426,37 @@ public final class DisguiseService {
             return DisguiseResult.failure(Component.text("That entity has no mob disguise.", NamedTextColor.GRAY));
         }
         mobDisguise.detach(target);
+        store.clear(target);
         LOG.info("Removed mob disguise from entity {}", target.getUniqueId());
         return DisguiseResult.ok();
+    }
+
+    /**
+     * Re-applies the disguise saved on a non-player mob, e.g. after its chunk loads. Must run on the main thread.
+     */
+    public void restorePersistedLiving(LivingEntity entity) {
+        if (entity instanceof Player || !entity.isValid() || mobDisguise.isMobDisguised(entity.getUniqueId())) {
+            return;
+        }
+        Optional<StoredDisguise> loaded = store.load(entity);
+        if (loaded.isEmpty() || loaded.get().kind() != StoredDisguise.Kind.MOB) {
+            return;
+        }
+        StoredDisguise stored = loaded.get();
+        try {
+            mobDisguise.attach(entity, stored.mobType(), stored.options());
+            LOG.info("Restored saved mob disguise for entity {} ({}) as {}", entity.getUniqueId(), entity.getType(), stored.mobType());
+        } catch (Exception ex) {
+            LOG.error("Failed to restore saved mob disguise for entity {}", entity.getUniqueId(), ex);
+        }
+    }
+
+    private void persistLivingMob(LivingEntity entity, EntityType type, MobDisguiseOptions options) {
+        try {
+            store.save(entity, StoredDisguise.mob(type, options, null));
+        } catch (Exception ex) {
+            LOG.error("Failed to persist mob disguise for entity {}", entity.getUniqueId(), ex);
+        }
     }
 
     private CompletableFuture<DisguiseResult> scheduleApplyPlayer(Player target, SkinSnapshot skin, String requestedName) {
@@ -342,6 +471,7 @@ public final class DisguiseService {
                 String shown = skin.getDisplayName().isBlank() ? requestedName.trim() : skin.getDisplayName();
                 mobDisguise.setSpoofedPlayerName(target.getUniqueId(), shown);
                 appearance.applyImpersonation(target, skin, shown);
+                remember(target, StoredDisguise.player(skin, shown, originalsByPlayer.get(target.getUniqueId())));
                 LOG.info(
                     "Applied disguise for {} as '{}' (skin source {})",
                     target.getUniqueId(),

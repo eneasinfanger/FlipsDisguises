@@ -65,6 +65,7 @@ import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPl
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPositionAndRotation;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerRotation;
 import io.papermc.paper.event.entity.EntityEquipmentChangedEvent;
+import io.papermc.paper.event.player.PlayerClientLoadedWorldEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.slf4j.Logger;
@@ -80,8 +81,10 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerItemHeldEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.scheduler.BukkitTask;
@@ -356,15 +359,90 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onRespawn(PlayerRespawnEvent event) {
+        UUID sid = event.getPlayer().getUniqueId();
+        scheduleObserverHeal(sid);
+        if (!mobTypeByEntityUuid.containsKey(sid)) {
+            return;
+        }
+        // The respawned player is a new entity with a new id. Re-key immediately so spawn packets sent to
+        // observers before the next tick are already rewritten, instead of briefly showing a real player.
+        syncEntityId(event.getPlayer());
         plugin.getServer().getScheduler().runTask(plugin, () -> {
-            Player p = event.getPlayer();
-            if (mobTypeByEntityUuid.containsKey(p.getUniqueId())) {
+            Player p = plugin.getServer().getPlayer(sid);
+            if (p != null && mobTypeByEntityUuid.containsKey(sid)) {
                 syncEntityId(p);
                 refreshEquipmentPeFromBukkit(p);
                 refreshEntityTrackers(p);
-                spawnSelfDecoy(p);
+                // The client rebuilds its world on respawn; a decoy sent before that finishes is lost.
+                plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                    Player again = plugin.getServer().getPlayer(sid);
+                    if (again != null) {
+                        spawnSelfDecoy(again);
+                    }
+                }, 3L);
             }
         });
+    }
+
+    /** Disguises sent while the joining client was still on the loading screen may have been dropped. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onClientLoaded(PlayerClientLoadedWorldEvent event) {
+        scheduleObserverHeal(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onObserverTeleport(PlayerTeleportEvent event) {
+        scheduleObserverHeal(event.getPlayer().getUniqueId());
+    }
+
+    /**
+     * A player that respawns, changes world or teleports far away starts tracking disguised players it has never
+     * seen. The vanilla spawn for those can be lost while the client is still switching levels or loading chunks,
+     * leaving the disguised player invisible. Once the observer has settled, re-send the disguise to every
+     * disguised player the server says it is now tracking. Two passes cover slow chunk loading.
+     */
+    private void scheduleObserverHeal(UUID observerUuid) {
+        for (long delay : new long[] {15L, 50L}) {
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> healObserver(observerUuid), delay);
+        }
+    }
+
+    private void healObserver(UUID observerUuid) {
+        Player observer = plugin.getServer().getPlayer(observerUuid);
+        if (observer == null || !observer.isOnline()) {
+            return;
+        }
+        // Every disguised entity, players and plain mobs alike: a mob restored on chunk load is disguised while
+        // a joining observer's client is still loading, so its re-spawn is the packet most likely to be lost.
+        for (Map.Entry<UUID, EntityType> entry : mobTypeByEntityUuid.entrySet()) {
+            UUID sid = entry.getKey();
+            if (sid.equals(observerUuid)) {
+                continue;
+            }
+            Entity entity = plugin.getServer().getEntity(sid);
+            if (!(entity instanceof LivingEntity disguised)
+                || !disguised.isValid()
+                || disguised.getWorld() != observer.getWorld()
+                || !disguised.isTrackedBy(observer)) {
+                continue;
+            }
+            sendExplicitMobDisguiseSpawn(
+                observer,
+                disguised,
+                disguised.getEntityId(),
+                entry.getValue(),
+                mobOptionsByEntityUuid.getOrDefault(sid, MobDisguiseOptions.DEFAULT)
+            );
+        }
+    }
+
+    /** The client discards the decoy together with its world; drop the server-side record so it is rebuilt on respawn. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onDeath(PlayerDeathEvent event) {
+        Player p = event.getEntity();
+        if (mobTypeByEntityUuid.containsKey(p.getUniqueId())) {
+            destroySelfDecoy(p.getUniqueId());
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -378,12 +456,13 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
         Player p = event.getPlayer();
+        scheduleObserverHeal(p.getUniqueId());
         if (mobTypeByEntityUuid.containsKey(p.getUniqueId())) {
             plugin.getServer().getScheduler().runTask(plugin, () -> {
                 syncEntityId(p);
                 refreshEquipmentPeFromBukkit(p);
                 refreshEntityTrackers(p);
-                spawnSelfDecoy(p);
+                plugin.getServer().getScheduler().runTaskLater(plugin, () -> spawnSelfDecoy(p), 3L);
             });
         }
     }

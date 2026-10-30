@@ -1,5 +1,6 @@
 package ch.eneas.flipsdisguises.disguise.application;
 
+import ch.eneas.flipsdisguises.disguise.port.DisguiseStore;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
 import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
@@ -33,6 +34,8 @@ class DisguiseServiceTest {
     @Mock
     private MobDisguisePort mobDisguise;
     @Mock
+    private DisguiseStore store;
+    @Mock
     private Player target;
 
     @BeforeEach
@@ -49,7 +52,7 @@ class DisguiseServiceTest {
 
     @Test
     void undisguiseWithoutPriorStateFails() {
-        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise);
+        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, store);
         DisguiseResult r = svc.undisguise(target);
         assertInstanceOf(DisguiseResult.Failure.class, r);
         verifyNoInteractions(appearance);
@@ -59,7 +62,7 @@ class DisguiseServiceTest {
     void rateLimitBlocksSecondCommand() {
         when(syncTasks.rateLimitMillis()).thenReturn(60_000L);
         when(skins.resolveUsername(any())).thenReturn(new CompletableFuture<>());
-        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise);
+        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, store);
         Player initiator = mock(Player.class);
         when(initiator.getUniqueId()).thenReturn(UUID.randomUUID());
         svc.disguiseAsNamedPlayer(initiator, target, "first");
