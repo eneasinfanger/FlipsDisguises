@@ -29,6 +29,7 @@ import com.github.retrooper.packetevents.protocol.item.ItemStack;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
 import com.github.retrooper.packetevents.protocol.sound.Sound;
+import com.github.retrooper.packetevents.protocol.sound.SoundCategory;
 import com.github.retrooper.packetevents.protocol.sound.StaticSound;
 import com.github.retrooper.packetevents.resources.ResourceLocation;
 import com.github.retrooper.packetevents.protocol.player.Equipment;
@@ -54,6 +55,10 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSp
 import com.github.retrooper.packetevents.util.EventCreationUtil;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnPlayer;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTeams;
+import com.github.retrooper.packetevents.protocol.player.InteractionHand;
+import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientAnimation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityAnimation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityStatus;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerFlying;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientInteractEntity;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPosition;
@@ -73,7 +78,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.EntityEquipment;
@@ -122,6 +129,81 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         EquipmentSlot.HELMET
     );
     private volatile PacketListenerCommon packetHandle;
+
+    /** Entity status that starts the melee attack animation of mobs whose arms/head are not driven by the swing packet. */
+    private static final int ATTACK_ANIMATION_STATUS = 4;
+    private static final int GOAT_LOWER_HEAD_STATUS = 58;
+    private static final int GOAT_RAISE_HEAD_STATUS = 59;
+    /**
+     * Attack poses that are metadata values rather than animations: polar bear standing (17), ghast charging (16),
+     * blaze on-fire flag (16) and vex charging flag (16).
+     */
+    private static final Map<EntityType, MetadataPose> METADATA_ATTACK_POSES = Map.of(
+        EntityType.POLAR_BEAR, new MetadataPose(
+            new EntityData<>(17, EntityDataTypes.BOOLEAN, true), new EntityData<>(17, EntityDataTypes.BOOLEAN, false)
+        ),
+        EntityType.GHAST, new MetadataPose(
+            new EntityData<>(16, EntityDataTypes.BOOLEAN, true), new EntityData<>(16, EntityDataTypes.BOOLEAN, false)
+        ),
+        EntityType.BLAZE, new MetadataPose(
+            new EntityData<>(16, EntityDataTypes.BYTE, (byte) 1), new EntityData<>(16, EntityDataTypes.BYTE, (byte) 0)
+        ),
+        EntityType.VEX, new MetadataPose(
+            new EntityData<>(16, EntityDataTypes.BYTE, (byte) 1), new EntityData<>(16, EntityDataTypes.BYTE, (byte) 0)
+        )
+    );
+    /** Sound played on each swing; keys missing from the sound registry are skipped at send time. */
+    private static final Map<EntityType, AttackSound> ATTACK_SOUNDS = Map.ofEntries(
+        attackSound(EntityType.IRON_GOLEM, "entity.iron_golem.attack", SoundCategory.NEUTRAL),
+        attackSound(EntityType.RAVAGER, "entity.ravager.attack", SoundCategory.HOSTILE),
+        attackSound(EntityType.HOGLIN, "entity.hoglin.attack", SoundCategory.HOSTILE),
+        attackSound(EntityType.ZOGLIN, "entity.zoglin.attack", SoundCategory.HOSTILE),
+        attackSound(EntityType.WARDEN, "entity.warden.attack_impact", SoundCategory.HOSTILE),
+        attackSound(EntityType.GOAT, "entity.goat.ram_impact", SoundCategory.NEUTRAL),
+        attackSound(EntityType.POLAR_BEAR, "entity.polar_bear.warning", SoundCategory.NEUTRAL),
+        attackSound(EntityType.GHAST, "entity.ghast.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.VEX, "entity.vex.charge", SoundCategory.HOSTILE),
+        attackSound(EntityType.PHANTOM, "entity.phantom.bite", SoundCategory.HOSTILE),
+        attackSound(EntityType.SLIME, "entity.slime.attack", SoundCategory.HOSTILE),
+        attackSound(EntityType.GUARDIAN, "entity.guardian.attack", SoundCategory.HOSTILE),
+        attackSound(EntityType.BEE, "entity.bee.sting", SoundCategory.NEUTRAL),
+        attackSound(EntityType.DOLPHIN, "entity.dolphin.attack", SoundCategory.NEUTRAL),
+        attackSound(EntityType.FOX, "entity.fox.bite", SoundCategory.NEUTRAL),
+        attackSound(EntityType.PANDA, "entity.panda.bite", SoundCategory.NEUTRAL),
+        attackSound(EntityType.FROG, "entity.frog.tongue", SoundCategory.NEUTRAL)
+    );
+
+    /** Throw/shoot sounds played when the disguised player drops an item (not on every swing). */
+    private static final Map<EntityType, AttackSound> THROW_SOUNDS = Map.ofEntries(
+        attackSound(EntityType.BLAZE, "entity.blaze.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.SKELETON, "entity.skeleton.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.STRAY, "entity.stray.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.BOGGED, "entity.bogged.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.DROWNED, "entity.drowned.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.WITCH, "entity.witch.throw", SoundCategory.HOSTILE),
+        attackSound(EntityType.SHULKER, "entity.shulker.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.WITHER, "entity.wither.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.BREEZE, "entity.breeze.shoot", SoundCategory.HOSTILE),
+        attackSound(EntityType.SNOW_GOLEM, "entity.snow_golem.shoot", SoundCategory.NEUTRAL),
+        attackSound(EntityType.LLAMA, "entity.llama.spit", SoundCategory.NEUTRAL),
+        attackSound(EntityType.TRADER_LLAMA, "entity.llama.spit", SoundCategory.NEUTRAL)
+    );
+
+    private static Map.Entry<EntityType, AttackSound> attackSound(EntityType type, String key, SoundCategory category) {
+        return Map.entry(type, new AttackSound(key, category));
+    }
+    private static final double ATTACK_SOUND_RANGE_SQ = 32.0 * 32.0;
+    /**
+     * Disguise mobs animated by {@link #ATTACK_ANIMATION_STATUS} instead of the arm-swing animation, which the server
+     * sends when the real player swings. Without the extra status packet their attack animation never plays.
+     */
+    private static final java.util.Set<EntityType> ATTACK_STATUS_MOBS = java.util.EnumSet.of(
+        EntityType.IRON_GOLEM,
+        EntityType.RAVAGER,
+        EntityType.HOGLIN,
+        EntityType.ZOGLIN,
+        EntityType.WARDEN
+    );
 
     /** Radius (blocks) within which a positional sound is attributed to a disguised entity. */
     private static final double POSITIONAL_SOUND_RADIUS_SQ = 1.5 * 1.5;
@@ -306,6 +388,27 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         }
     }
 
+    /**
+     * Fires before the hurt/death sound is sent, so the anchor is exact even when the entity is moving fast
+     * (falls, knockback) and the per-tick snapshot would be several blocks off.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onDamageRefreshSoundAnchor(EntityDamageEvent event) {
+        Entity entity = event.getEntity();
+        EntityType disguise = mobTypeByEntityUuid.get(entity.getUniqueId());
+        if (disguise == null) {
+            return;
+        }
+        Map<UUID, SoundAnchor> next = new HashMap<>(soundAnchors);
+        next.put(entity.getUniqueId(), soundAnchorOf(entity, disguise));
+        soundAnchors = next;
+    }
+
+    private static SoundAnchor soundAnchorOf(Entity entity, EntityType disguise) {
+        String prefix = entity instanceof Player ? "entity.player" : "entity." + entity.getType().getKey().getKey();
+        return new SoundAnchor(entity.getX(), entity.getY(), entity.getZ(), prefix, disguise);
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityEquipmentChanged(EntityEquipmentChangedEvent event) {
         LivingEntity le = event.getEntity();
@@ -318,7 +421,12 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     public void onItemHeld(PlayerItemHeldEvent event) {
         Player p = event.getPlayer();
         if (mobTypeByEntityUuid.containsKey(p.getUniqueId())) {
-            refreshEquipmentPeFromBukkit(p);
+            // The event fires before the held slot changes; read it again next tick.
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                if (p.isOnline()) {
+                    refreshEquipmentPeFromBukkit(p);
+                }
+            });
         }
     }
 
@@ -330,6 +438,133 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         MobDisguisePacketTrace.logClientInbound(LOG, plugin, event, "");
         swallowSelfDecoyInteraction(event);
         mirrorSelfDecoyOnMovement(event);
+        onSubjectSwing(event);
+    }
+
+    /**
+     * Driven by the subject's own swing packet rather than the server's {@code ENTITY_ANIMATION} echo: the server
+     * never echoes the swing back to the subject (decoy), and mobs in {@link #hasSpecialAttackAnimation} need a
+     * status/metadata change instead of the plain arm swing that observers receive.
+     */
+    private void onSubjectSwing(PacketReceiveEvent event) {
+        if (event.getPacketType() != PacketType.Play.Client.ANIMATION) {
+            return;
+        }
+        UUID subjectUuid = event.getUser().getUUID();
+        EntityType disguise = mobTypeByEntityUuid.get(subjectUuid);
+        if (disguise == null) {
+            return;
+        }
+        boolean offHand;
+        try {
+            offHand = new WrapperPlayClientAnimation(event).getHand() == InteractionHand.OFF_HAND;
+        } catch (Throwable t) {
+            return;
+        }
+        boolean special = hasSpecialAttackAnimation(disguise);
+        boolean attackEffects = special || ATTACK_SOUNDS.containsKey(disguise);
+        Integer decoyId = decoyIdBySubjectUuid.get(subjectUuid);
+        if (decoyId != null) {
+            User user = event.getUser();
+            if (special) {
+                if (!offHand) {
+                    playSpecialAttackAnimation(user, decoyId, disguise);
+                }
+            } else {
+                user.sendPacketSilently(new WrapperPlayServerEntityAnimation(
+                    decoyId,
+                    offHand
+                        ? WrapperPlayServerEntityAnimation.EntityAnimationType.SWING_OFF_HAND
+                        : WrapperPlayServerEntityAnimation.EntityAnimationType.SWING_MAIN_ARM
+                ));
+            }
+        }
+        if (attackEffects && !offHand) {
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                Player subject = plugin.getServer().getPlayer(subjectUuid);
+                if (subject == null || !subject.isOnline()) {
+                    return;
+                }
+                AttackSound sound = ATTACK_SOUNDS.get(disguise);
+                for (Player viewer : subject.getWorld().getPlayers()) {
+                    User viewerUser = PacketEvents.getAPI().getPlayerManager().getUser(viewer);
+                    if (viewerUser == null) {
+                        continue;
+                    }
+                    // The subject's own decoy was already animated from the netty thread.
+                    if (!viewer.getUniqueId().equals(subjectUuid)) {
+                        playSpecialAttackAnimation(viewerUser, subject.getEntityId(), disguise);
+                    }
+                    if (sound != null && viewer.getLocation().distanceSquared(subject.getLocation()) <= ATTACK_SOUND_RANGE_SQ) {
+                        sendAttackSound(viewerUser, subject, sound);
+                    }
+                }
+            });
+        }
+    }
+
+    private static boolean hasSpecialAttackAnimation(EntityType disguise) {
+        return ATTACK_STATUS_MOBS.contains(disguise) || METADATA_ATTACK_POSES.containsKey(disguise);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onDropItem(PlayerDropItemEvent event) {
+        Player subject = event.getPlayer();
+        EntityType disguise = mobTypeByEntityUuid.get(subject.getUniqueId());
+        AttackSound sound = disguise == null ? null : THROW_SOUNDS.get(disguise);
+        if (sound == null) {
+            return;
+        }
+        for (Player viewer : subject.getWorld().getPlayers()) {
+            User viewerUser = PacketEvents.getAPI().getPlayerManager().getUser(viewer);
+            if (viewerUser != null && viewer.getLocation().distanceSquared(subject.getLocation()) <= ATTACK_SOUND_RANGE_SQ) {
+                sendAttackSound(viewerUser, subject, sound);
+            }
+        }
+    }
+
+    private void sendAttackSound(User target, Player subject, AttackSound sound) {
+        if (!soundExists(sound.key())) {
+            return;
+        }
+        target.sendPacketSilently(new WrapperPlayServerSoundEffect(
+            new StaticSound(new ResourceLocation("minecraft", sound.key()), null),
+            sound.category(),
+            new Vector3i((int) (subject.getX() * 8), (int) (subject.getY() * 8), (int) (subject.getZ() * 8)),
+            1.0f,
+            1.0f
+        ));
+    }
+
+    private void playSpecialAttackAnimation(User target, int entityId, EntityType disguise) {
+        if (ATTACK_STATUS_MOBS.contains(disguise)) {
+            target.sendPacketSilently(new WrapperPlayServerEntityStatus(entityId, ATTACK_ANIMATION_STATUS));
+        } else if (disguise == EntityType.GOAT) {
+            target.sendPacketSilently(new WrapperPlayServerEntityStatus(entityId, GOAT_LOWER_HEAD_STATUS));
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> target.sendPacketSilently(
+                new WrapperPlayServerEntityStatus(entityId, GOAT_RAISE_HEAD_STATUS)
+            ), 12L);
+        } else {
+            MetadataPose pose = METADATA_ATTACK_POSES.get(disguise);
+            if (pose != null) {
+                target.sendPacketSilently(metadataPacket(entityId, pose.on()));
+                plugin.getServer().getScheduler().runTaskLater(plugin, () -> target.sendPacketSilently(
+                    metadataPacket(entityId, pose.off())
+                ), 10L);
+            }
+        }
+    }
+
+    private static WrapperPlayServerEntityMetadata metadataPacket(int entityId, EntityData<?> data) {
+        return new WrapperPlayServerEntityMetadata(entityId, new ArrayList<>(List.of(data)));
+    }
+
+    /** Attack pose that is a metadata value held briefly, then reset to {@code off}. */
+    private record MetadataPose(EntityData<?> on, EntityData<?> off) {
+    }
+
+    /** Sound the server plays itself on attack in vanilla (the client does not synthesize these from the animation). */
+    private record AttackSound(String key, SoundCategory category) {
     }
 
     /**
@@ -1296,6 +1531,22 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             m.put(EquipmentSlot.HELMET, peItem(be.getHelmet()));
         }
         equipmentPeByEntityUuid.put(subject.getUniqueId(), m);
+        syncDecoyEquipment(subject.getUniqueId(), m);
+    }
+
+    /** The decoy only exists client-side, so it gets no vanilla equipment broadcasts and must be updated by hand. */
+    private void syncDecoyEquipment(UUID subjectUuid, EnumMap<EquipmentSlot, ItemStack> slots) {
+        Integer decoyId = decoyIdBySubjectUuid.get(subjectUuid);
+        if (decoyId == null) {
+            return;
+        }
+        Player player = plugin.getServer().getPlayer(subjectUuid);
+        if (player == null || !player.isOnline()) {
+            return;
+        }
+        PacketEvents.getAPI().getPlayerManager().sendPacketSilently(
+            player, new WrapperPlayServerEntityEquipment(decoyId, toOrderedEquipmentList(slots))
+        );
     }
 
     /**
@@ -1495,14 +1746,20 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             }
             return;
         }
+        Map<UUID, SoundAnchor> previous = soundAnchors;
         Map<UUID, SoundAnchor> next = new HashMap<>();
         for (Map.Entry<UUID, EntityType> e : mobTypeByEntityUuid.entrySet()) {
             Entity entity = plugin.getServer().getEntity(e.getKey());
             if (entity == null || !entity.isValid()) {
+                // Dead entities are invalid, but their death sound may still be encoded after this tick: keep the
+                // last known anchor until the disguise is detached or the entity is valid again.
+                SoundAnchor last = previous.get(e.getKey());
+                if (last != null) {
+                    next.put(e.getKey(), last);
+                }
                 continue;
             }
-            String prefix = entity instanceof Player ? "entity.player" : "entity." + entity.getType().getKey().getKey();
-            next.put(e.getKey(), new SoundAnchor(entity.getX(), entity.getY(), entity.getZ(), prefix, e.getValue()));
+            next.put(e.getKey(), soundAnchorOf(entity, e.getValue()));
         }
         soundAnchors = next;
     }
