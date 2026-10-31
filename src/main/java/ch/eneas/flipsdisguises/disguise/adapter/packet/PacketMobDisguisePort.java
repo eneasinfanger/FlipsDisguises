@@ -1890,6 +1890,12 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         UUID sid = subject.getUniqueId();
         EntityType bukkitMob = mobTypeByEntityUuid.get(sid);
         if (bukkitMob == null) {
+            for (Player viewer : subject.getWorld().getPlayers()) {
+                if (!viewer.getUniqueId().equals(sid)) {
+                    viewer.hideEntity(plugin, subject);
+                    viewer.showEntity(plugin, subject);
+                }
+            }
             return;
         }
         MobDisguiseOptions opts = mobOptionsByEntityUuid.getOrDefault(sid, MobDisguiseOptions.DEFAULT);
