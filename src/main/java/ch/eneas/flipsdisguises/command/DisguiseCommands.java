@@ -208,6 +208,7 @@ public final class DisguiseCommands implements CommandRegister {
 
     private CommandAPICommand buildDisguiseCommand() {
         return new CommandAPICommand("disguise")
+            .withPermission("flipsdisguises.disguise")
             .withSubcommand(buildPlayerSubcommand())
             .withSubcommand(buildMobSubcommand())
             .withSubcommand(buildEntityMobSubcommand())

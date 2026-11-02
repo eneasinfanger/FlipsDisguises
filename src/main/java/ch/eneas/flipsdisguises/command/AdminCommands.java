@@ -28,8 +28,8 @@ public final class AdminCommands implements CommandRegister {
     public Collection<? extends ExecutableCommand<?, CommandSender>> registerAll() {
         return List.of(new CommandAPICommand("flipsdisguises")
             .withAliases("fd")
+            .withPermission("flipsdisguises.admin")
             .withSubcommand(new CommandAPICommand("reload")
-                .withPermission("flipsdisguises.admin")
                 .executes((CommandSender sender, CommandArguments args) -> {
                     plugin.reloadConfig();
                     sender.sendMessage(Component.text("Configuration reloaded.", NamedTextColor.GREEN));

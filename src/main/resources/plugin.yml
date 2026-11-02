@@ -12,6 +12,9 @@ softdepend:
   - Geyser-Spigot
 
 permissions:
+  flipsdisguises.disguise:
+    description: Use the /disguise command.
+    default: op
   flipsdisguises.disguise.player:
     description: Apply a player skin disguise to others.
     default: op
@@ -23,7 +26,7 @@ permissions:
     default: op
   flipsdisguises.undisguise:
     description: Restore player appearance.
-    default: true
+    default: op
   flipsdisguises.admin:
     description: Reload plugin configuration.
     default: op
