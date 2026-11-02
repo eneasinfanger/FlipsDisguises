@@ -4,6 +4,7 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.context.CommandContextBuilder;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.tree.RootCommandNode;
+import dev.jorel.commandapi.CommandAPIBukkit;
 import dev.jorel.commandapi.SuggestionInfo;
 import dev.jorel.commandapi.executors.CommandArguments;
 import lombok.AccessLevel;
@@ -15,7 +16,12 @@ import java.util.Map;
 
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 class MobDisguiseUtil {
-    static Object CTX_SOURCE_REF;
+    /** Brigadier source of the console, used for the synthetic contexts that flag values are parsed/suggested with. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object consoleSource() {
+        CommandAPIBukkit api = CommandAPIBukkit.get();
+        return api.getBrigadierSourceFromCommandSender(api.wrapCommandSender(Bukkit.getConsoleSender()));
+    }
 
     @SuppressWarnings("unchecked")
     static <C> SuggestionInfo<C> createSuggestionInfoForInput(String input) {
@@ -29,7 +35,7 @@ class MobDisguiseUtil {
 
     @SuppressWarnings("unchecked")
     static <C> CommandContextBuilder<C> createCommandCtxBuilder() {
-        return (CommandContextBuilder<C>) new CommandContextBuilder<>(null, CTX_SOURCE_REF, new RootCommandNode<>(), 0);
+        return (CommandContextBuilder<C>) new CommandContextBuilder<>(null, consoleSource(), new RootCommandNode<>(), 0);
     }
 
     static <C> CommandContext<C> createCommandCtx(String input) {

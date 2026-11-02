@@ -79,7 +79,7 @@ CDI-like DI/registration framework instead of manual wiring:
 All commands are built with CommandAPI's fluent `CommandAPICommand` builder (see `DisguiseCommands`,
 `AdminCommands`), not Bukkit's `CommandExecutor`. Custom argument types live under `command/args/` (e.g.
 `MobDisguiseOptionsArgument` for parsing `--size`/`--name`/`--variant` style flags via
-`MobDisguiseFlagTokanizer`). Command handlers call into `DisguiseService` and then reply with Adventure
+`FlagSyntax`). Command handlers call into `DisguiseService` and then reply with Adventure
 `Component` messages — never raw strings or legacy color codes.
 
 ### Mob disguise mechanism (packet rewriting)

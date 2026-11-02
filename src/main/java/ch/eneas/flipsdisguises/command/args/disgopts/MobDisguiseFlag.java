@@ -24,12 +24,15 @@ class MobDisguiseFlag {
         setter.accept(opts, value);
     }
 
-    public boolean isValidFor(EntityType type) {
-        if (!allowedTypes.isEmpty() && !allowedTypes.contains(type)) {
-            return false;
+    /** A flag applies to an entity type if it is listed explicitly <em>or</em> the type is in an allowed category. */
+    public boolean isValidFor(EntityType entityType) {
+        if (allowedTypes.contains(entityType)) {
+            return true;
         }
-        Class<? extends Entity> clazz = type.getEntityClass();
-        return clazz == null || allowedCategories.stream()
-            .anyMatch(c -> c.allows(clazz));
+        Class<? extends Entity> clazz = entityType.getEntityClass();
+        if (clazz == null) {
+            return allowedCategories.contains(EntityCategory.ALL);
+        }
+        return allowedCategories.stream().anyMatch(c -> c.allows(clazz));
     }
 }

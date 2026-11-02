@@ -1,6 +1,5 @@
 package ch.eneas.flipsdisguises.command.args.disgopts;
 
-import ch.eneas.flipsdisguises.command.MobDisguiseFlagTokanizer;
 import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
 import ch.eneas.flipsdisguises.disguise.meta.ArgType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -10,11 +9,12 @@ import lombok.NoArgsConstructor;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 
@@ -53,24 +53,29 @@ public final class PlayerDisguiseFlags {
     /** Parses {@code --flag value} pairs; blank input yields the default options. */
     public static PlayerDisguiseOptions parse(String input) throws FlagException {
         PlayerDisguiseOptions options = new PlayerDisguiseOptions();
-        List<Map.Entry<Integer, String>> tokens = new ArrayList<>(MobDisguiseFlagTokanizer.tokenize(input).entrySet());
-        for (int i = 0; i < tokens.size(); i++) {
-            String token = tokens.get(i).getValue();
-            if (!token.startsWith("--")) {
-                throw new FlagException("Unexpected token (flags must start with --): " + token);
-            }
-            String name = token.substring(2);
+        List<FlagSyntax.Entry> entries;
+        try {
+            entries = FlagSyntax.group(FlagSyntax.tokenize(input));
+        } catch (FlagSyntax.SyntaxException e) {
+            throw new FlagException(e.getMessage());
+        }
+        Set<String> seen = new HashSet<>();
+        for (FlagSyntax.Entry entry : entries) {
+            String name = entry.name();
             Flag flag = FLAGS.get(name);
             if (flag == null) {
-                throw new FlagException("Unknown flag: --" + name);
+                throw new FlagException("Unknown flag --" + name + ". Flags: " + String.join(", ", names().stream().map(n -> "--" + n).toList()));
             }
-            if (i + 1 >= tokens.size()) {
+            if (!seen.add(name)) {
+                throw new FlagException("Duplicate flag --" + name);
+            }
+            if (entry.value() == null) {
                 throw new FlagException("Missing value for --" + name);
             }
             try {
-                flag.field().set(options, flag.type().parse(tokens.get(++i).getValue()));
+                flag.field().set(options, flag.type().parse(entry.value().text()));
             } catch (CommandSyntaxException e) {
-                throw new FlagException(e.getMessage());
+                throw new FlagException("Invalid value for --" + name + ": " + e.getMessage());
             } catch (IllegalAccessException e) {
                 throw new IllegalStateException(e);
             }

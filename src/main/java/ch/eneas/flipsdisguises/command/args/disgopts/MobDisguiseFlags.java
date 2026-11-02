@@ -34,6 +34,11 @@ class MobDisguiseFlags {
         return ALL_FLAGS.get(flag);
     }
 
+    /** Names of all flags that apply to {@code type}, sorted. */
+    public static List<String> namesFor(EntityType type) {
+        return allFlags().filter(f -> f.isValidFor(type)).map(MobDisguiseFlag::getName).toList();
+    }
+
     static {
         MethodHandles.Lookup lookup = MethodHandles.lookup();
         BinaryOperator<MobDisguiseFlag> throwIfSameFlag = (opt1, opt2) -> {
@@ -50,6 +55,9 @@ class MobDisguiseFlags {
         checkState(validFor != null, "missing @ValidFor on MobDisguiseOptions field '%s'!", optsField.getName());
         ArgType argType = optsField.getAnnotation(ArgType.class);
         checkState(argType != null, "missing @ArgType on MobDisguiseOptions field '%s'!", optsField.getName());
+
+        checkState(validFor.value().length + validFor.categories().length > 0,
+            "@ValidFor on MobDisguiseOptions field '%s' lists no types or categories!", optsField.getName());
 
         Set<EntityType> allowedTypes = EnumSet.noneOf(EntityType.class);
         Collections.addAll(allowedTypes, validFor.value());
