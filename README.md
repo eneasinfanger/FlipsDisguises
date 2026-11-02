@@ -97,22 +97,35 @@ types are in `ch.eneas.flipsdisguises.api` and the option classes in `ch.eneas.f
 
 ### Add the dependency
 
-FlipsDisguises is not published to a public repository. Build it and install it to your local Maven repo first:
-
-```
-mvn install
-```
-
-Then depend on it as `provided`, since the server already has the plugin:
+FlipsDisguises is available through [JitPack](https://jitpack.io/#eneasinfanger/FlipsDisguises). Add the repository
+and depend on it as `provided`, since the server already has the plugin:
 
 ```xml
-<dependency>
-    <groupId>ch.eneas</groupId>
-    <artifactId>flips-disguises</artifactId>
-    <version>1.0-SNAPSHOT</version>
-    <scope>provided</scope>
-</dependency>
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+    </repository>
+</repositories>
+
+<dependencies>
+    <dependency>
+        <groupId>com.github.eneasinfanger</groupId>
+        <artifactId>FlipsDisguises</artifactId>
+        <version>1.0.0</version>
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
 ```
+
+Gradle:
+
+```kotlin
+repositories { maven("https://jitpack.io") }
+dependencies { compileOnly("com.github.eneasinfanger:FlipsDisguises:1.0.0") }
+```
+
+Replace `1.0.0` with the [latest release tag](https://github.com/eneasinfanger/FlipsDisguises/releases).
 
 Make sure it loads before your plugin, in your `plugin.yml`:
 
@@ -177,5 +190,4 @@ mvn test        # unit tests (JUnit 5 + Mockito)
 mvn package     # shaded plugin jar in target/
 ```
 
-Requires JDK 21. The `ch.eneas:FlipsLoader:1.0-SNAPSHOT` dependency is not publicly published, so it must already
-be installed in your local Maven repository.
+Requires JDK 21. The [FlipsLoader](https://github.com/eneasinfanger/FlipsLoader) dependency is resolved from JitPack.
