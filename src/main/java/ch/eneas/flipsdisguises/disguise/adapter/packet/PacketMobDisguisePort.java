@@ -4,6 +4,7 @@ import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
 import com.github.retrooper.packetevents.PacketEvents;
@@ -250,6 +251,15 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     @Override
     public boolean isMobDisguised(UUID entityUuid) {
         return mobTypeByEntityUuid.containsKey(entityUuid);
+    }
+
+    @Override
+    public Optional<StoredDisguise> mobDisguiseOf(UUID entityUuid) {
+        EntityType type = mobTypeByEntityUuid.get(entityUuid);
+        if (type == null) {
+            return Optional.empty();
+        }
+        return Optional.of(StoredDisguise.mob(type, mobOptionsByEntityUuid.get(entityUuid), null));
     }
 
     @Override

@@ -135,7 +135,7 @@ public final class DisguiseCommands implements CommandRegister {
                 int ok = 0;
                 int fail = nonLiving;
                 for (LivingEntity le : living) {
-                    if (disguiseService.disguiseLivingAsMob(le, type, opts) instanceof DisguiseResult.Ok) {
+                    if (disguiseService.disguiseAsMob(le, type, opts) instanceof DisguiseResult.Ok) {
                         ok++;
                     } else {
                         fail++;
@@ -208,7 +208,7 @@ public final class DisguiseCommands implements CommandRegister {
                 if (!allowed(sender)) {
                     return;
                 }
-                disguiseService.disguiseAsNamedPlayer(target, skinName).thenAccept(result ->
+                disguiseService.disguiseAsPlayer(target, skinName).thenAccept(result ->
                     plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
             });
     }
@@ -242,19 +242,11 @@ public final class DisguiseCommands implements CommandRegister {
                     int ok = 0;
                     int skip = 0;
                     for (Entity e : selected) {
-                        DisguiseResult r;
-                        if (e instanceof Player p) {
-                            r = disguiseService.undisguise(p);
-                        } else if (e instanceof LivingEntity le) {
-                            r = disguiseService.undisguiseLivingMob(le);
-                        } else {
-                            skip++;
-                            continue;
-                        }
-                        if (r instanceof DisguiseResult.Failure) {
-                            skip++;
-                        } else {
+                        if (e instanceof LivingEntity le
+                            && disguiseService.undisguise(le) instanceof DisguiseResult.Ok) {
                             ok++;
+                        } else {
+                            skip++;
                         }
                     }
                     if (ok == 0 && skip == 0) {

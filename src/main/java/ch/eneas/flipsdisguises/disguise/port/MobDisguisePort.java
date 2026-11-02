@@ -1,15 +1,23 @@
 package ch.eneas.flipsdisguises.disguise.port;
 
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
+import java.util.Optional;
 import java.util.UUID;
 
 public interface MobDisguisePort {
 
     boolean isMobDisguised(UUID entityUuid);
+
+    /**
+     * The mob disguise currently attached to this entity, as a {@link StoredDisguise} of kind {@code MOB}
+     * (without an original look, which the port does not track).
+     */
+    Optional<StoredDisguise> mobDisguiseOf(UUID entityUuid);
 
     default void attach(LivingEntity subject, EntityType type) {
         attach(subject, type, MobDisguiseOptions.DEFAULT);

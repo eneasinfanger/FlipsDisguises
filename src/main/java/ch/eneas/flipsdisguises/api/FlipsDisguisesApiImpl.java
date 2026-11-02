@@ -4,13 +4,14 @@ import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseResult;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseService;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
-import java.util.UUID;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 @Injectable
@@ -24,53 +25,46 @@ public final class FlipsDisguisesApiImpl implements FlipsDisguisesApi {
     }
 
     @Override
-    public CompletableFuture<DisguiseResult> disguisePlayerAsPlayer(Player target, String skinUsername) {
+    public CompletableFuture<DisguiseResult> disguiseAsPlayer(Player target, String skinUsername) {
         requireMainThread();
-        return disguiseService.disguiseAsNamedPlayer(target, skinUsername);
+        return disguiseService.disguiseAsPlayer(target, skinUsername);
     }
 
     @Override
-    public DisguiseResult disguisePlayerAsMob(Player target, EntityType mobType) {
-        return disguisePlayerAsMob(target, mobType, MobDisguiseOptions.DEFAULT);
+    public DisguiseResult disguiseAsMob(LivingEntity target, EntityType mobType) {
+        return disguiseAsMob(target, mobType, MobDisguiseOptions.DEFAULT);
     }
 
     @Override
-    public DisguiseResult disguisePlayerAsMob(Player target, EntityType mobType, MobDisguiseOptions options) {
+    public DisguiseResult disguiseAsMob(LivingEntity target, EntityType mobType, MobDisguiseOptions options) {
         requireMainThread();
         return disguiseService.disguiseAsMob(target, mobType, options);
     }
 
     @Override
-    public DisguiseResult disguiseLivingAsMob(LivingEntity target, EntityType mobType) {
-        return disguiseLivingAsMob(target, mobType, MobDisguiseOptions.DEFAULT);
-    }
-
-    @Override
-    public DisguiseResult disguiseLivingAsMob(LivingEntity target, EntityType mobType, MobDisguiseOptions options) {
-        requireMainThread();
-        return disguiseService.disguiseLivingAsMob(target, mobType, options);
-    }
-
-    @Override
-    public DisguiseResult undisguise(Player target) {
+    public DisguiseResult undisguise(LivingEntity target) {
         requireMainThread();
         return disguiseService.undisguise(target);
     }
 
     @Override
-    public DisguiseResult undisguiseMob(LivingEntity target) {
-        requireMainThread();
-        return disguiseService.undisguiseLivingMob(target);
+    public Optional<DisguiseInfo> getDisguise(LivingEntity target) {
+        return disguiseService.activeDisguise(target).map(FlipsDisguisesApiImpl::toInfo);
     }
 
     @Override
-    public boolean isDisguised(UUID playerId) {
-        return disguiseService.isDisguised(playerId);
+    public boolean isDisguised(LivingEntity target) {
+        return disguiseService.isDisguised(target);
     }
 
-    @Override
-    public boolean isMobModelDisguised(UUID entityUuid) {
-        return disguiseService.isMobModelDisguised(entityUuid);
+    private static DisguiseInfo toInfo(StoredDisguise disguise) {
+        return switch (disguise.kind()) {
+            case MOB -> new DisguiseInfo.MobDisguise(disguise.mobType(), disguise.options());
+            case PLAYER -> new DisguiseInfo.PlayerDisguise(
+                disguise.shownName(),
+                disguise.skin() == null ? null : disguise.skin().getSkinSourceUuid()
+            );
+        };
     }
 
     private static void requireMainThread() {

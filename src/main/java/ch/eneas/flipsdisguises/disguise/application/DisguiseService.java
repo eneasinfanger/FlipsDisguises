@@ -54,12 +54,19 @@ public final class DisguiseService {
         this.store = store;
     }
 
-    public boolean isDisguised(UUID playerId) {
-        return originalsByPlayer.containsKey(playerId);
+    /**
+     * The skin or mob disguise currently applied to this entity, if any. For players it is the in-memory active
+     * disguise; for any other entity it is the mob model attached by the {@link MobDisguisePort}.
+     */
+    public Optional<StoredDisguise> activeDisguise(LivingEntity target) {
+        if (target instanceof Player) {
+            return Optional.ofNullable(activeByPlayer.get(target.getUniqueId()));
+        }
+        return mobDisguise.mobDisguiseOf(target.getUniqueId());
     }
 
-    public boolean isMobModelDisguised(UUID entityUuid) {
-        return mobDisguise.isMobDisguised(entityUuid);
+    public boolean isDisguised(LivingEntity target) {
+        return activeDisguise(target).isPresent();
     }
 
     /**
@@ -154,7 +161,15 @@ public final class DisguiseService {
         }
     }
 
-    public DisguiseResult undisguise(Player target) {
+    /**
+     * Removes the disguise from a player (restoring their look) or from any other living entity. Must run on the
+     * main thread.
+     */
+    public DisguiseResult undisguise(LivingEntity target) {
+        return target instanceof Player player ? undisguisePlayer(player) : undisguiseNonPlayer(target);
+    }
+
+    private DisguiseResult undisguisePlayer(Player target) {
         PlayerLookBackup original = originalsByPlayer.remove(target.getUniqueId());
         if (original == null) {
             return DisguiseResult.failure(Component.text("Nothing to restore.", NamedTextColor.GRAY));
@@ -174,7 +189,7 @@ public final class DisguiseService {
      * Resolves the skin asynchronously, then applies it on the main thread; the returned future completes there
      * (or on the lookup thread if the lookup itself failed).
      */
-    public CompletableFuture<DisguiseResult> disguiseAsNamedPlayer(Player target, String skinOwner) {
+    public CompletableFuture<DisguiseResult> disguiseAsPlayer(Player target, String skinOwner) {
         String owner = skinOwner.trim();
         if (owner.isEmpty()) {
             return CompletableFuture.completedFuture(
@@ -188,15 +203,22 @@ public final class DisguiseService {
     }
 
     /**
-     * Must run on the main thread.
+     * Shows the entity as a mob. A player keeps their real entity and gets their original look backed up so
+     * {@link #undisguise} can restore it; any other entity just has the mob model attached. Must run on the main thread.
      */
-    public DisguiseResult disguiseAsMob(Player target, EntityType type, MobDisguiseOptions options) {
-        if (!MobDisguiseEntityMapping.isSupported(type)) {
-            return unsupportedMobType();
-        }
+    public DisguiseResult disguiseAsMob(LivingEntity target, EntityType type, MobDisguiseOptions options) {
         MobDisguiseOptions opts = options == null ? MobDisguiseOptions.DEFAULT : options;
+        return target instanceof Player player
+            ? disguisePlayerAsMob(player, type, opts)
+            : disguiseNonPlayerAsMob(target, type, opts);
+    }
+
+    private DisguiseResult disguisePlayerAsMob(Player target, EntityType type, MobDisguiseOptions opts) {
         if (!target.isOnline()) {
             return DisguiseResult.failure(Component.text("Target is not online.", NamedTextColor.RED));
+        }
+        if (!MobDisguiseEntityMapping.isSupported(type)) {
+            return unsupportedMobType();
         }
         try {
             prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_MOB);
@@ -215,19 +237,12 @@ public final class DisguiseService {
         }
     }
 
-    /**
-     * Must run on the main thread. Players are rejected here; use {@link #disguiseAsMob} for them.
-     */
-    public DisguiseResult disguiseLivingAsMob(LivingEntity target, EntityType type, MobDisguiseOptions options) {
-        if (target instanceof Player) {
-            return DisguiseResult.failure(Component.text("Use /disguise mob for players.", NamedTextColor.RED));
+    private DisguiseResult disguiseNonPlayerAsMob(LivingEntity target, EntityType type, MobDisguiseOptions opts) {
+        if (!target.isValid()) {
+            return DisguiseResult.failure(Component.text("That entity is no longer valid.", NamedTextColor.RED));
         }
         if (!MobDisguiseEntityMapping.isSupported(type)) {
             return unsupportedMobType();
-        }
-        MobDisguiseOptions opts = options == null ? MobDisguiseOptions.DEFAULT : options;
-        if (!target.isValid()) {
-            return DisguiseResult.failure(Component.text("That entity is no longer valid.", NamedTextColor.RED));
         }
         try {
             mobDisguise.attach(target, type, opts);
@@ -247,7 +262,7 @@ public final class DisguiseService {
         ));
     }
 
-    public DisguiseResult undisguiseLivingMob(LivingEntity target) {
+    private DisguiseResult undisguiseNonPlayer(LivingEntity target) {
         if (!mobDisguise.isMobDisguised(target.getUniqueId())) {
             return DisguiseResult.failure(Component.text("That entity has no mob disguise.", NamedTextColor.GRAY));
         }
