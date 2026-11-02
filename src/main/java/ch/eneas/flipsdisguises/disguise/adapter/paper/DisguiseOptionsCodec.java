@@ -1,6 +1,7 @@
 package ch.eneas.flipsdisguises.disguise.adapter.paper;
 
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
 import com.google.gson.JsonObject;
 import io.papermc.paper.registry.RegistryAccess;
 import io.papermc.paper.registry.RegistryKey;
@@ -24,12 +25,13 @@ import java.lang.reflect.Modifier;
 import java.util.Map;
 
 /**
- * JSON form of {@link MobDisguiseOptions}. Walks the option fields reflectively, so a new option is persisted
- * without touching this class as long as it is a boolean, int, component, enum or registry-keyed type.
+ * JSON form of {@link MobDisguiseOptions} and {@link PlayerDisguiseOptions}. Walks the option fields reflectively,
+ * so a new option is persisted without touching this class as long as it is a boolean, int, double, component,
+ * enum or registry-keyed type.
  */
-final class MobDisguiseOptionsCodec {
+final class DisguiseOptionsCodec {
 
-    private static final Logger LOG = LoggerFactory.getLogger(MobDisguiseOptionsCodec.class);
+    private static final Logger LOG = LoggerFactory.getLogger(DisguiseOptionsCodec.class);
 
     private static final Map<Class<?>, RegistryKey<?>> REGISTRY_KEYS = Map.of(
         Villager.Profession.class, RegistryKey.VILLAGER_PROFESSION,
@@ -42,12 +44,12 @@ final class MobDisguiseOptionsCodec {
         Wolf.Variant.class, RegistryKey.WOLF_VARIANT
     );
 
-    private MobDisguiseOptionsCodec() {
+    private DisguiseOptionsCodec() {
     }
 
-    static JsonObject toJson(MobDisguiseOptions options) {
+    static JsonObject toJson(Object options) {
         JsonObject out = new JsonObject();
-        for (Field f : optionFields()) {
+        for (Field f : optionFields(options.getClass())) {
             try {
                 Object v = f.get(options);
                 if (v == null) {
@@ -57,6 +59,8 @@ final class MobDisguiseOptionsCodec {
                     out.addProperty(f.getName(), b);
                 } else if (v instanceof Integer i) {
                     out.addProperty(f.getName(), i);
+                } else if (v instanceof Double d) {
+                    out.addProperty(f.getName(), d);
                 } else if (v instanceof Component c) {
                     out.addProperty(f.getName(), GsonComponentSerializer.gson().serialize(c));
                 } else if (v instanceof Enum<?> e) {
@@ -73,9 +77,22 @@ final class MobDisguiseOptionsCodec {
         return out;
     }
 
-    static MobDisguiseOptions fromJson(JsonObject json) {
-        MobDisguiseOptions options = new MobDisguiseOptions();
-        for (Field f : optionFields()) {
+    static MobDisguiseOptions mobFromJson(JsonObject json) {
+        return fromJson(MobDisguiseOptions.class, json);
+    }
+
+    static PlayerDisguiseOptions playerFromJson(JsonObject json) {
+        return fromJson(PlayerDisguiseOptions.class, json);
+    }
+
+    private static <T> T fromJson(Class<T> type, JsonObject json) {
+        T options;
+        try {
+            options = type.getDeclaredConstructor().newInstance();
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("Options class needs a public no-arg constructor: " + type.getName(), ex);
+        }
+        for (Field f : optionFields(type)) {
             if (!json.has(f.getName())) {
                 continue;
             }
@@ -99,6 +116,9 @@ final class MobDisguiseOptionsCodec {
         if (type == Integer.class) {
             return element.getAsInt();
         }
+        if (type == Double.class) {
+            return element.getAsDouble();
+        }
         if (type == Component.class) {
             return GsonComponentSerializer.gson().deserialize(element.getAsString());
         }
@@ -114,8 +134,8 @@ final class MobDisguiseOptionsCodec {
         return null;
     }
 
-    private static Field[] optionFields() {
-        return java.util.Arrays.stream(MobDisguiseOptions.class.getDeclaredFields())
+    private static Field[] optionFields(Class<?> type) {
+        return java.util.Arrays.stream(type.getDeclaredFields())
             .filter(f -> !Modifier.isStatic(f.getModifiers()) && !f.isSynthetic())
             .peek(f -> f.setAccessible(true))
             .toArray(Field[]::new);

@@ -52,7 +52,10 @@ public final class PdcDisguiseStore implements DisguiseStore {
             json.addProperty("mob", d.mobType().key().asString());
         }
         if (d.options() != null) {
-            json.add("options", MobDisguiseOptionsCodec.toJson(d.options()));
+            json.add("options", DisguiseOptionsCodec.toJson(d.options()));
+        }
+        if (d.playerOptions() != null) {
+            json.add("playerOptions", DisguiseOptionsCodec.toJson(d.playerOptions()));
         }
         if (d.skin() != null) {
             json.add("skin", skinToJson(d.skin()));
@@ -105,13 +108,14 @@ public final class PdcDisguiseStore implements DisguiseStore {
                 }
                 return Optional.of(StoredDisguise.mob(
                     type,
-                    json.has("options") ? MobDisguiseOptionsCodec.fromJson(json.getAsJsonObject("options")) : null,
+                    json.has("options") ? DisguiseOptionsCodec.mobFromJson(json.getAsJsonObject("options")) : null,
                     original
                 ));
             }
             return Optional.of(StoredDisguise.player(
                 skinFromJson(json.getAsJsonObject("skin")),
                 optString(json, "shown"),
+                json.has("playerOptions") ? DisguiseOptionsCodec.playerFromJson(json.getAsJsonObject("playerOptions")) : null,
                 original
             ));
         } catch (RuntimeException ex) {

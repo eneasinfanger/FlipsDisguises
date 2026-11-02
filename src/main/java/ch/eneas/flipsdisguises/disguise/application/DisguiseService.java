@@ -3,6 +3,7 @@ package ch.eneas.flipsdisguises.disguise.application;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
 import ch.eneas.flipsdisguises.disguise.domain.PlayerLookBackup;
 import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
 import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
@@ -312,7 +313,7 @@ public final class DisguiseService {
                 String shown = skin.getDisplayName().isBlank() ? requestedName.trim() : skin.getDisplayName();
                 mobDisguise.setSpoofedPlayerName(target.getUniqueId(), shown);
                 appearance.applyImpersonation(target, skin, shown);
-                remember(target, StoredDisguise.player(skin, shown, originalsByPlayer.get(target.getUniqueId())));
+                remember(target, StoredDisguise.player(skin, shown, PlayerDisguiseOptions.DEFAULT, originalsByPlayer.get(target.getUniqueId())));
                 LOG.info(
                     "Applied disguise for {} as '{}' (skin source {})",
                     target.getUniqueId(),

@@ -1,6 +1,7 @@
 package ch.eneas.flipsdisguises.api;
 
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
 import org.bukkit.entity.EntityType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -17,8 +18,13 @@ public sealed interface DisguiseInfo permits DisguiseInfo.PlayerDisguise, Disgui
      *
      * @param shownName     the name other players see
      * @param skinSourceUuid the Mojang UUID the skin was taken from, if known
+     * @param options        how the player model is shown
      */
-    record PlayerDisguise(@NotNull String shownName, @Nullable UUID skinSourceUuid) implements DisguiseInfo {}
+    record PlayerDisguise(
+        @NotNull String shownName,
+        @Nullable UUID skinSourceUuid,
+        @NotNull PlayerDisguiseOptions options
+    ) implements DisguiseInfo {}
 
     /**
      * An entity, player or not, shown as a mob.

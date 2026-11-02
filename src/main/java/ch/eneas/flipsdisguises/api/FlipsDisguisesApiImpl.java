@@ -62,7 +62,8 @@ public final class FlipsDisguisesApiImpl implements FlipsDisguisesApi {
             case MOB -> new DisguiseInfo.MobDisguise(disguise.mobType(), disguise.options());
             case PLAYER -> new DisguiseInfo.PlayerDisguise(
                 disguise.shownName(),
-                disguise.skin() == null ? null : disguise.skin().getSkinSourceUuid()
+                disguise.skin() == null ? null : disguise.skin().getSkinSourceUuid(),
+                disguise.playerOptions()
             );
         };
     }
