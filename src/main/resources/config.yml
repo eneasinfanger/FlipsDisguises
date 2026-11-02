@@ -1,5 +1,9 @@
 rate-limit-millis: 1000
 
+# Set to false to completely disable the /disguise and /undisguise commands.
+# For full effect a server restart is recommended.
+commands-enabled: true
+
 # INFO-level PacketEvents tracing (no need for Paper debug). Focused mode logs spawn/bundle/meta/equipment/tab/destroy/teams
 # plus a few client packets. Enable mob-disguise-packet-trace-all-play for every Play packet (very noisy).
 mob-disguise-packet-trace: false

@@ -44,7 +44,14 @@ public final class DisguiseCommands implements CommandRegister {
 
     @Override
     public Collection<? extends ExecutableCommand<?, CommandSender>> registerAll() {
+        if (!commandsEnabled()) {
+            return List.of();
+        }
         return List.of(buildDisguiseCommand(), buildUndisguiseCommand());
+    }
+
+    private boolean commandsEnabled() {
+        return plugin.getConfig().getBoolean("commands-enabled", true);
     }
 
     private CommandAPICommand buildMobSubcommand() {
@@ -209,6 +216,7 @@ public final class DisguiseCommands implements CommandRegister {
     private CommandAPICommand buildDisguiseCommand() {
         return new CommandAPICommand("disguise")
             .withPermission("flipsdisguises.disguise")
+            .withRequirement(sender -> commandsEnabled())
             .withSubcommand(buildPlayerSubcommand())
             .withSubcommand(buildMobSubcommand())
             .withSubcommand(buildEntityMobSubcommand())
@@ -297,6 +305,7 @@ public final class DisguiseCommands implements CommandRegister {
         targetArg.setOptional(true);
         return new CommandAPICommand("undisguise")
             .withPermission("flipsdisguises.undisguise")
+            .withRequirement(sender -> commandsEnabled())
             .withArguments(targetArg)
             .withSubcommand(new CommandAPICommand("entity")
                 .withPermission("flipsdisguises.undisguise")
