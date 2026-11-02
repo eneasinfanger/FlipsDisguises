@@ -1014,13 +1014,25 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 return;
             }
         }
-        data.add(new EntityData<>(0, EntityDataTypes.BYTE, SELF_INVISIBLE_FLAG));
+        // No flags entry in this packet: leave it alone. Appending a bare invisible byte would overwrite the
+        // client's whole flags byte (sprinting, gliding, sneaking, ...) and e.g. cancel an elytra glide.
+    }
+
+    /** The subject's real shared-flags byte (metadata index 0), so a self update never clobbers other bits. */
+    private static int realSharedFlags(Player subject) {
+        return (subject.getFireTicks() > 0 ? 0x01 : 0)
+            | (subject.isSneaking() ? 0x02 : 0)
+            | (subject.isSprinting() ? 0x08 : 0)
+            | (subject.isSwimming() ? 0x10 : 0)
+            | (subject.isGlowing() ? 0x40 : 0)
+            | (subject.isGliding() ? 0x80 : 0);
     }
 
     private void sendSelfInvisibility(Player subject, boolean invisible) {
+        int flags = realSharedFlags(subject) | (invisible || subject.isInvisible() ? SELF_INVISIBLE_FLAG : 0);
         WrapperPlayServerEntityMetadata meta = new WrapperPlayServerEntityMetadata(
             subject.getEntityId(),
-            List.of(new EntityData<>(0, EntityDataTypes.BYTE, invisible ? SELF_INVISIBLE_FLAG : (byte) 0))
+            List.of(new EntityData<>(0, EntityDataTypes.BYTE, (byte) flags))
         );
         PacketEvents.getAPI().getPlayerManager().sendPacketSilently(subject, meta);
     }
@@ -1231,14 +1243,8 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                         ItemStack it = e.getItem();
                         selfSlots.put(e.getSlot(), it == null ? ItemStack.EMPTY : it.copy());
                     }
-                    // Invisible entities still render armor/held items; strip self equipment so the
-                    // disguised player sees only the decoy in third person. First-person hand is unaffected.
-                    List<Equipment> empty = new ArrayList<>(EQUIPMENT_WRITE_ORDER.size());
-                    for (EquipmentSlot s : EQUIPMENT_WRITE_ORDER) {
-                        empty.add(new Equipment(s, ItemStack.EMPTY));
-                    }
-                    w.setEquipment(empty);
-                    event.markForReEncode(true);
+                    // Self equipment is passed through untouched: the client needs its real chestplate to
+                    // keep gliding with an elytra (an empty chest slot makes it cancel the glide every tick).
                     Integer decoyId = decoyIdBySubjectUuid.get(selfUuid);
                     Player selfPlayer = event.getPlayer();
                     if (decoyId != null && selfPlayer != null) {
@@ -1628,13 +1634,10 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                             ItemStack it = e.getItem();
                             selfSlots.put(e.getSlot(), it == null ? ItemStack.EMPTY : it.copy());
                         }
-                        // Invisible entities still render armor/held items; strip self equipment so the
-                        // disguised player sees only the decoy in third person.
-                        List<Equipment> empty = new ArrayList<>(EQUIPMENT_WRITE_ORDER.size());
-                        for (EquipmentSlot s : EQUIPMENT_WRITE_ORDER) {
-                            empty.add(new Equipment(s, ItemStack.EMPTY));
-                        }
-                        WrapperPlayServerEntityEquipment eqOut = new WrapperPlayServerEntityEquipment(eidEq, empty);
+                        // Self equipment passes through untouched (the client needs its real elytra to glide).
+                        WrapperPlayServerEntityEquipment eqOut = new WrapperPlayServerEntityEquipment(
+                            eidEq, w.getEquipment()
+                        );
                         eqOut.setServerVersion(event.getServerVersion());
                         eqOut.setClientVersion(event.getUser().getClientVersion());
                         outPackets.add(eqOut);
