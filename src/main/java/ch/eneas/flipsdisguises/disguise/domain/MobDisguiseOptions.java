@@ -62,7 +62,7 @@ public class MobDisguiseOptions {
     private Villager.Profession profession;
     @ValidFor({EntityType.VILLAGER, EntityType.ZOMBIE_VILLAGER})
     @ArgType(VillagerTypeArgument.class)
-    private Villager.Type type;
+    private Villager.Type villagerType;
     @ValidFor(EntityType.SHEEP)
     @ArgType(BooleanArgument.class)
     private Boolean sheared;

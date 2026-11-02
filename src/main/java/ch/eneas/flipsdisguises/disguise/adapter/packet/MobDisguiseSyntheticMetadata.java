@@ -29,14 +29,10 @@ import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import net.kyori.adventure.util.TriState;
 import org.bukkit.DyeColor;
 import org.bukkit.entity.Ageable;
-import org.bukkit.entity.Cat;
 import org.bukkit.entity.Cow;
 import org.bukkit.entity.EntityType;
-import org.bukkit.entity.Frog;
 import org.bukkit.entity.Horse;
-import org.bukkit.entity.Pig;
 import org.bukkit.entity.Pose;
-import org.bukkit.entity.Villager;
 import org.bukkit.util.OldEnum;
 
 import java.util.ArrayList;
@@ -210,8 +206,8 @@ public final class MobDisguiseSyntheticMetadata {
 
     private static VillagerData villagerData(MobDisguiseOptions o) {
         VillagerType vt = VillagerTypes.PLAINS;
-        if (o.type() != null) {
-            VillagerType t = VillagerTypes.getByName(o.type().getKey().toString());
+        if (o.villagerType() != null) {
+            VillagerType t = VillagerTypes.getByName(o.villagerType().getKey().toString());
             if (t != null) {
                 vt = t;
             }
