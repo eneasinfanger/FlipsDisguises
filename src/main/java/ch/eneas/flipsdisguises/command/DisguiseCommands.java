@@ -5,6 +5,8 @@ import ch.eneas.flips.loader.api.CommandRegister;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.command.args.disgopts.MobDisguiseOptionsArgument;
+import ch.eneas.flipsdisguises.command.args.disgopts.PlayerDisguiseOptionsArgument;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
 import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseResult;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseService;
@@ -156,11 +158,59 @@ public final class DisguiseCommands implements CommandRegister {
             });
     }
 
+    /** {@code /disguise entityplayer <entities> <skin> [--flags]}: shows living non-player entities as a player model. */
+    private CommandAPICommand buildEntityPlayerSubcommand() {
+        EntitySelectorArgument.ManyEntities entitiesArg = new EntitySelectorArgument.ManyEntities("entities");
+        Argument<String> skinArg = new StringArgument("skin");
+        Argument<PlayerDisguiseOptions> flagArg = new PlayerDisguiseOptionsArgument("playerFlags");
+        flagArg.setOptional(true);
+        return new CommandAPICommand("entityplayer")
+            .withPermission("flipsdisguises.disguise.entity")
+            .withArguments(entitiesArg, skinArg, flagArg)
+            .executes((CommandSender sender, CommandArguments args) -> {
+                @SuppressWarnings("unchecked")
+                Collection<Entity> selected = (Collection<Entity>) args.getUnchecked("entities");
+                String skin = args.getUnchecked("skin");
+                PlayerDisguiseOptions opts = args.getUnchecked("playerFlags");
+                List<LivingEntity> living = new ArrayList<>();
+                int skipped = 0;
+                for (Entity e : selected) {
+                    if (e instanceof LivingEntity le && !(le instanceof Player)) {
+                        living.add(le);
+                    } else {
+                        skipped++;
+                    }
+                }
+                if (living.isEmpty() && skipped == 0) {
+                    sender.sendMessage(Component.text(
+                        "No entities matched. Usage: /disguise entityplayer <entities> <skin> [--flags]",
+                        NamedTextColor.YELLOW
+                    ));
+                    return;
+                }
+                if (!allowed(sender)) {
+                    return;
+                }
+                if (living.isEmpty()) {
+                    sender.sendMessage(Component.text("Only living non-player entities can be disguised here.", NamedTextColor.RED));
+                    return;
+                }
+                if (skipped > 0) {
+                    sender.sendMessage(Component.text(skipped + " selection(s) skipped.", NamedTextColor.YELLOW));
+                }
+                for (LivingEntity le : living) {
+                    disguiseService.disguiseAsPlayer(le, skin, opts).thenAccept(result ->
+                        plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
+                }
+            });
+    }
+
     private CommandAPICommand buildDisguiseCommand() {
         return new CommandAPICommand("disguise")
             .withSubcommand(buildPlayerSubcommand())
             .withSubcommand(buildMobSubcommand())
             .withSubcommand(buildEntityMobSubcommand())
+            .withSubcommand(buildEntityPlayerSubcommand())
             .executes((CommandSender sender, CommandArguments args) ->
                 sendUsage(sender));
     }
@@ -219,6 +269,7 @@ public final class DisguiseCommands implements CommandRegister {
         sender.sendMessage(Component.text("  /disguise player <target> <name> — disguise another player", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /disguise mob <target> <mobType> [--flags] — disguise a player as a mob", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /disguise entity <entities> <mobType> [--flags] — disguise entities as a mob", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  /disguise entityplayer <entities> <skin> [--flags] — disguise entities as a player", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /undisguise [target] — remove a player disguise", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /undisguise entity <entities> — remove entity disguises", NamedTextColor.GRAY));
         sender.sendMessage(Component.text(

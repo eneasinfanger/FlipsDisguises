@@ -2,6 +2,7 @@ package ch.eneas.flipsdisguises.api;
 
 import ch.eneas.flipsdisguises.disguise.application.DisguiseResult;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -23,6 +24,18 @@ public interface FlipsDisguisesApi {
      * returned future completes on the main thread once the disguise is applied (or has failed).
      */
     @NotNull CompletableFuture<DisguiseResult> disguiseAsPlayer(@NotNull Player target, @NotNull String skinUsername);
+
+    /**
+     * Shows the entity (a player or any other living entity) as a player model wearing the skin of
+     * {@code skinUsername}. The skin lookup is asynchronous; the returned future completes on the main thread.
+     *
+     * @param options how the player model is shown; {@code null} means {@link PlayerDisguiseOptions#DEFAULT}
+     */
+    @NotNull CompletableFuture<DisguiseResult> disguiseAsPlayer(
+        @NotNull LivingEntity target,
+        @NotNull String skinUsername,
+        @Nullable PlayerDisguiseOptions options
+    );
 
     @NotNull DisguiseResult disguiseAsMob(@NotNull LivingEntity target, @NotNull EntityType mobType);
 

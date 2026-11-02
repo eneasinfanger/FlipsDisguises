@@ -5,6 +5,8 @@ import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
 import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
 import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
 import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
@@ -15,7 +17,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -116,5 +121,53 @@ class DisguiseServiceTest {
         DisguiseResult r = svc.disguiseAsPlayer(target, "  ").join();
         assertInstanceOf(DisguiseResult.Failure.class, r);
         verifyNoInteractions(skins);
+    }
+
+    @Test
+    void disguiseNonPlayerAsPlayerAttachesPlayerModelAndPersists() {
+        LivingEntity zombie = mock(LivingEntity.class);
+        when(zombie.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(zombie.isValid()).thenReturn(true);
+        SkinSnapshot skin = new SkinSnapshot(UUID.randomUUID(), "Notch", List.of());
+        when(skins.resolveUsername("Notch")).thenReturn(CompletableFuture.completedFuture(skin));
+        PlayerDisguiseOptions options = PlayerDisguiseOptions.DEFAULT.withGlowing(true);
+        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, store);
+
+        DisguiseResult r = svc.disguiseAsPlayer(zombie, " Notch ", options).join();
+
+        assertInstanceOf(DisguiseResult.Ok.class, r);
+        verify(mobDisguise).attachPlayerModel(zombie, skin, "Notch", options);
+        verify(store).save(zombie, StoredDisguise.player(skin, "Notch", options, null));
+        verifyNoInteractions(appearance);
+    }
+
+    @Test
+    void disguiseInvalidNonPlayerAsPlayerFails() {
+        LivingEntity zombie = mock(LivingEntity.class);
+        when(zombie.isValid()).thenReturn(false);
+        when(skins.resolveUsername("Notch")).thenReturn(
+            CompletableFuture.completedFuture(new SkinSnapshot(UUID.randomUUID(), "Notch", List.of()))
+        );
+        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, store);
+
+        DisguiseResult r = svc.disguiseAsPlayer(zombie, "Notch", null).join();
+
+        assertInstanceOf(DisguiseResult.Failure.class, r);
+        verifyNoInteractions(appearance, store);
+    }
+
+    @Test
+    void restorePersistedPlayerModelReattachesIt() {
+        LivingEntity zombie = mock(LivingEntity.class);
+        when(zombie.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(zombie.isValid()).thenReturn(true);
+        SkinSnapshot skin = new SkinSnapshot(UUID.randomUUID(), "Notch", List.of());
+        PlayerDisguiseOptions options = PlayerDisguiseOptions.DEFAULT.withSize(2.0);
+        when(store.load(zombie)).thenReturn(Optional.of(StoredDisguise.player(skin, "Notch", options, null)));
+        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, store);
+
+        svc.restorePersistedLiving(zombie);
+
+        verify(mobDisguise).attachPlayerModel(zombie, skin, "Notch", options);
     }
 }

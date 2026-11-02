@@ -301,6 +301,10 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     @Override
     public void attach(LivingEntity subject, EntityType type, MobDisguiseOptions options) {
         UUID sid = subject.getUniqueId();
+        PlayerModel replacedModel = playerModelByEntityUuid.remove(sid);
+        if (replacedModel != null) {
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> removePlayerModelFromClients(sid, replacedModel), 5L);
+        }
         mobTypeByEntityUuid.put(sid, type);
         mobOptionsByEntityUuid.put(sid, options == null ? MobDisguiseOptions.DEFAULT : options);
         syncEntityId(subject);

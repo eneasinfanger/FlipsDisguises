@@ -4,6 +4,7 @@ import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseResult;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
 import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseService;
 import org.bukkit.Bukkit;
@@ -28,6 +29,16 @@ public final class FlipsDisguisesApiImpl implements FlipsDisguisesApi {
     public CompletableFuture<DisguiseResult> disguiseAsPlayer(Player target, String skinUsername) {
         requireMainThread();
         return disguiseService.disguiseAsPlayer(target, skinUsername);
+    }
+
+    @Override
+    public CompletableFuture<DisguiseResult> disguiseAsPlayer(
+        LivingEntity target,
+        String skinUsername,
+        PlayerDisguiseOptions options
+    ) {
+        requireMainThread();
+        return disguiseService.disguiseAsPlayer(target, skinUsername, options);
     }
 
     @Override

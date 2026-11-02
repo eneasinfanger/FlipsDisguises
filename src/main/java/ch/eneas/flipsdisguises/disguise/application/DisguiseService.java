@@ -191,13 +191,29 @@ public final class DisguiseService {
      * (or on the lookup thread if the lookup itself failed).
      */
     public CompletableFuture<DisguiseResult> disguiseAsPlayer(Player target, String skinOwner) {
+        return disguiseAsPlayer(target, skinOwner, PlayerDisguiseOptions.DEFAULT);
+    }
+
+    /**
+     * Shows the entity as a player model with the skin of {@code skinOwner}. A player gets their profile swapped
+     * (and their original look backed up); any other living entity is rewritten to a player model on the wire.
+     */
+    public CompletableFuture<DisguiseResult> disguiseAsPlayer(
+        LivingEntity target,
+        String skinOwner,
+        PlayerDisguiseOptions options
+    ) {
         String owner = skinOwner.trim();
         if (owner.isEmpty()) {
             return CompletableFuture.completedFuture(
                 DisguiseResult.failure(Component.text("Player name required.", NamedTextColor.RED))
             );
         }
-        return skins.resolveUsername(owner).thenCompose(skin -> scheduleApplyPlayer(target, skin, owner)).exceptionally(ex -> {
+        PlayerDisguiseOptions opts = options == null ? PlayerDisguiseOptions.DEFAULT : options;
+        return skins.resolveUsername(owner).thenCompose(skin -> target instanceof Player player
+            ? scheduleApplyPlayer(player, skin, owner, opts)
+            : scheduleApplyPlayerModel(target, skin, owner, opts)
+        ).exceptionally(ex -> {
             LOG.error("Failed to resolve skin profile '{}' for {}", owner, target.getUniqueId(), ex);
             return DisguiseResult.failure(Component.text("Could not resolve that player.", NamedTextColor.RED));
         });
@@ -281,11 +297,16 @@ public final class DisguiseService {
             return;
         }
         Optional<StoredDisguise> loaded = store.load(entity);
-        if (loaded.isEmpty() || loaded.get().kind() != StoredDisguise.Kind.MOB) {
+        if (loaded.isEmpty()) {
             return;
         }
         StoredDisguise stored = loaded.get();
         try {
+            if (stored.kind() == StoredDisguise.Kind.PLAYER) {
+                mobDisguise.attachPlayerModel(entity, stored.skin(), stored.shownName(), stored.playerOptions());
+                LOG.info("Restored saved player-model disguise for entity {} ({})", entity.getUniqueId(), entity.getType());
+                return;
+            }
             mobDisguise.attach(entity, stored.mobType(), stored.options());
             LOG.info("Restored saved mob disguise for entity {} ({}) as {}", entity.getUniqueId(), entity.getType(), stored.mobType());
         } catch (Exception ex) {
@@ -301,7 +322,46 @@ public final class DisguiseService {
         }
     }
 
-    private CompletableFuture<DisguiseResult> scheduleApplyPlayer(Player target, SkinSnapshot skin, String requestedName) {
+    private CompletableFuture<DisguiseResult> scheduleApplyPlayerModel(
+        LivingEntity target,
+        SkinSnapshot skin,
+        String requestedName,
+        PlayerDisguiseOptions options
+    ) {
+        CompletableFuture<DisguiseResult> done = new CompletableFuture<>();
+        syncTasks.runSync(() -> {
+            try {
+                if (!target.isValid()) {
+                    done.complete(DisguiseResult.failure(Component.text("That entity is no longer valid.", NamedTextColor.RED)));
+                    return;
+                }
+                String shown = shownNameOf(skin, requestedName);
+                mobDisguise.attachPlayerModel(target, skin, shown, options);
+                try {
+                    store.save(target, StoredDisguise.player(skin, shown, options, null));
+                } catch (Exception ex) {
+                    LOG.error("Failed to persist player-model disguise for entity {}", target.getUniqueId(), ex);
+                }
+                LOG.info("Applied player-model disguise for {} ({}) as '{}'", target.getUniqueId(), target.getType(), shown);
+                done.complete(DisguiseResult.ok());
+            } catch (Exception ex) {
+                LOG.error("Failed player-model disguise for entity {}", target.getUniqueId(), ex);
+                done.complete(DisguiseResult.failure(Component.text("Could not apply disguise to that entity.", NamedTextColor.RED)));
+            }
+        });
+        return done;
+    }
+
+    private static String shownNameOf(SkinSnapshot skin, String requestedName) {
+        return skin.getDisplayName() == null || skin.getDisplayName().isBlank() ? requestedName.trim() : skin.getDisplayName();
+    }
+
+    private CompletableFuture<DisguiseResult> scheduleApplyPlayer(
+        Player target,
+        SkinSnapshot skin,
+        String requestedName,
+        PlayerDisguiseOptions options
+    ) {
         CompletableFuture<DisguiseResult> done = new CompletableFuture<>();
         syncTasks.runSync(() -> {
             try {
@@ -310,10 +370,10 @@ public final class DisguiseService {
                     return;
                 }
                 prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_PLAYER);
-                String shown = skin.getDisplayName().isBlank() ? requestedName.trim() : skin.getDisplayName();
+                String shown = shownNameOf(skin, requestedName);
                 mobDisguise.setSpoofedPlayerName(target.getUniqueId(), shown);
                 appearance.applyImpersonation(target, skin, shown);
-                remember(target, StoredDisguise.player(skin, shown, PlayerDisguiseOptions.DEFAULT, originalsByPlayer.get(target.getUniqueId())));
+                remember(target, StoredDisguise.player(skin, shown, options, originalsByPlayer.get(target.getUniqueId())));
                 LOG.info(
                     "Applied disguise for {} as '{}' (skin source {})",
                     target.getUniqueId(),
