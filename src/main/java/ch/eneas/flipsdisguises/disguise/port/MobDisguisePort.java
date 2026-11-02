@@ -52,4 +52,15 @@ public interface MobDisguisePort {
 
     default void clearSpoofedPlayerName(UUID playerUuid) {
     }
+
+    /**
+     * Applies the appearance options (glowing, pose, skin layers, size, nameplate, ...) of a player's skin
+     * disguise for everyone but the player. Their own client keeps controlling their own view.
+     */
+    default void applyPlayerAppearance(Player player, PlayerDisguiseOptions options) {
+    }
+
+    /** Stops applying appearance options; callers re-send the player afterwards to restore the real values. */
+    default void clearPlayerAppearance(UUID playerUuid) {
+    }
 }

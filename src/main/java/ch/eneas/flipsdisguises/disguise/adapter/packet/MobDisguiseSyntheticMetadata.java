@@ -182,6 +182,87 @@ public final class MobDisguiseSyntheticMetadata {
     }
 
     /**
+     * Applies the appearance options of a skinned real player onto metadata the server is sending for them, keeping
+     * every entry the options do not touch (health, hand state, ...).
+     *
+     * @return the patched entries, or {@code null} if nothing in {@code data} was affected
+     */
+    public static List<EntityData<?>> patchPlayerMetadata(List<EntityData<?>> data, PlayerDisguiseOptions o) {
+        List<EntityData<?>> out = new ArrayList<>(data.size());
+        boolean changed = false;
+        for (EntityData<?> entry : data) {
+            EntityData<?> replacement = null;
+            Object value = entry.getValue();
+            switch (entry.getIndex()) {
+                case IDX_SHARED_FLAGS -> {
+                    if (value instanceof Byte b && o.applyToSharedFlags(b & 0xFF) != b) {
+                        replacement = new EntityData<>(IDX_SHARED_FLAGS, EntityDataTypes.BYTE, o.applyToSharedFlags(b & 0xFF));
+                    }
+                }
+                case IDX_SILENT -> {
+                    if (o.silent() != null) {
+                        replacement = new EntityData<>(IDX_SILENT, EntityDataTypes.BOOLEAN, o.silent());
+                    }
+                }
+                case IDX_POSE -> {
+                    Pose pose = appearancePose(o);
+                    if (pose != null) {
+                        replacement = new EntityData<>(IDX_POSE, EntityDataTypes.ENTITY_POSE, bukkitPoseToPe(pose));
+                    }
+                }
+                case IDX_AVATAR_MAIN_HAND -> {
+                    if (o.leftHanded() != null) {
+                        replacement = new EntityData<>(IDX_AVATAR_MAIN_HAND, EntityDataTypes.HUMANOID_ARM, mainHand(o));
+                    }
+                }
+                case IDX_AVATAR_SKIN_PARTS -> {
+                    if (o.hasSkinPartOverrides() && value instanceof Byte b) {
+                        replacement = new EntityData<>(IDX_AVATAR_SKIN_PARTS, EntityDataTypes.BYTE, o.applyToSkinParts(b & 0xFF));
+                    }
+                }
+                default -> {
+                }
+            }
+            changed |= replacement != null;
+            out.add(replacement != null ? replacement : entry);
+        }
+        return changed ? out : null;
+    }
+
+    /**
+     * The entries to send to an observer right after a skinned real player starts being tracked, which the spawn
+     * bundle's own metadata cannot be patched for.
+     *
+     * @param currentFlags the player's shared-flags byte as the server has it
+     */
+    public static List<EntityData<?>> playerAppearanceUpdate(int currentFlags, PlayerDisguiseOptions o) {
+        List<EntityData<?>> list = new ArrayList<>();
+        list.add(new EntityData<>(IDX_SHARED_FLAGS, EntityDataTypes.BYTE, o.applyToSharedFlags(currentFlags)));
+        if (o.silent() != null) {
+            list.add(new EntityData<>(IDX_SILENT, EntityDataTypes.BOOLEAN, o.silent()));
+        }
+        Pose pose = appearancePose(o);
+        if (pose != null) {
+            list.add(new EntityData<>(IDX_POSE, EntityDataTypes.ENTITY_POSE, bukkitPoseToPe(pose)));
+        }
+        if (o.leftHanded() != null) {
+            list.add(new EntityData<>(IDX_AVATAR_MAIN_HAND, EntityDataTypes.HUMANOID_ARM, mainHand(o)));
+        }
+        if (o.hasSkinPartOverrides()) {
+            list.add(new EntityData<>(IDX_AVATAR_SKIN_PARTS, EntityDataTypes.BYTE, o.skinPartsMask()));
+        }
+        return list;
+    }
+
+    private static Pose appearancePose(PlayerDisguiseOptions o) {
+        return o.pose() != null ? o.pose() : Boolean.TRUE.equals(o.sneaking()) ? Pose.SNEAKING : null;
+    }
+
+    private static HumanoidArm mainHand(PlayerDisguiseOptions o) {
+        return Boolean.TRUE.equals(o.leftHanded()) ? HumanoidArm.LEFT : HumanoidArm.RIGHT;
+    }
+
+    /**
      * Metadata for a player-model disguise. Only the shared flags and the avatar indices are sent, never the
      * original entity's metadata: the overhead name of a player comes from its profile and team, so no custom name
      * is sent either.
@@ -285,7 +366,7 @@ public final class MobDisguiseSyntheticMetadata {
         };
     }
 
-    private static EntityPose bukkitPoseToPe(Pose p) {
+    static EntityPose bukkitPoseToPe(Pose p) {
         return switch (p) {
             case STANDING -> EntityPose.STANDING;
             case FALL_FLYING -> EntityPose.FALL_FLYING;

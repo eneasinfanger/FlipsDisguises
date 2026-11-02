@@ -5,6 +5,7 @@ import ch.eneas.flips.loader.api.CommandRegister;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.command.args.disgopts.MobDisguiseOptionsArgument;
+import ch.eneas.flipsdisguises.command.args.disgopts.PlayerDisguiseFlags;
 import ch.eneas.flipsdisguises.command.args.disgopts.PlayerDisguiseOptionsArgument;
 import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
 import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
@@ -225,7 +226,15 @@ public final class DisguiseCommands implements CommandRegister {
             .withArguments(new GreedyStringArgument("args"))
             .executes((CommandSender sender, CommandArguments args) -> {
                 String raw = ((String) args.getUnchecked("args")).trim();
-                String[] tokens = raw.split("\\s+");
+                int flagStart = raw.startsWith("--") ? 0 : raw.indexOf(" --");
+                PlayerDisguiseOptions options;
+                try {
+                    options = PlayerDisguiseFlags.parse(flagStart < 0 ? "" : raw.substring(flagStart).trim());
+                } catch (PlayerDisguiseFlags.FlagException e) {
+                    sender.sendMessage(Component.text(e.getMessage(), NamedTextColor.RED));
+                    return;
+                }
+                String[] tokens = (flagStart < 0 ? raw : raw.substring(0, flagStart).trim()).split("\\s+");
                 Player target;
                 String skinName;
                 if (tokens.length == 1) {
@@ -258,22 +267,26 @@ public final class DisguiseCommands implements CommandRegister {
                 if (!allowed(sender)) {
                     return;
                 }
-                disguiseService.disguiseAsPlayer(target, skinName).thenAccept(result ->
+                disguiseService.disguiseAsPlayer(target, skinName, options).thenAccept(result ->
                     plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
             });
     }
 
     private static void sendUsage(CommandSender sender) {
         sender.sendMessage(Component.text("Disguise usage:", NamedTextColor.YELLOW));
-        sender.sendMessage(Component.text("  /disguise player <name> — disguise yourself as a player", NamedTextColor.GRAY));
-        sender.sendMessage(Component.text("  /disguise player <target> <name> — disguise another player", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  /disguise player <name> [--flags] — disguise yourself as a player", NamedTextColor.GRAY));
+        sender.sendMessage(Component.text("  /disguise player <target> <name> [--flags] — disguise another player", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /disguise mob <target> <mobType> [--flags] — disguise a player as a mob", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /disguise entity <entities> <mobType> [--flags] — disguise entities as a mob", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /disguise entityplayer <entities> <skin> [--flags] — disguise entities as a player", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /undisguise [target] — remove a player disguise", NamedTextColor.GRAY));
         sender.sendMessage(Component.text("  /undisguise entity <entities> — remove entity disguises", NamedTextColor.GRAY));
         sender.sendMessage(Component.text(
-            "Flags: --size <1-127> (slime/magma/phantom), --name <MiniMessage>, --variant <TYPE_SPECIFIC>",
+            "Mob flags: --size <1-127> (slime/magma/phantom), --name <MiniMessage>, --variant <TYPE_SPECIFIC>",
+            NamedTextColor.DARK_GRAY
+        ));
+        sender.sendMessage(Component.text(
+            "Player flags: " + String.join(", ", PlayerDisguiseFlags.names().stream().map(n -> "--" + n).toList()),
             NamedTextColor.DARK_GRAY
         ));
     }

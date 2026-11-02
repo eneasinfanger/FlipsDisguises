@@ -15,6 +15,7 @@ import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
 import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
@@ -79,6 +80,7 @@ public final class DisguiseService {
         activeByPlayer.remove(playerId);
         mobDisguise.detachDisconnected(playerId);
         mobDisguise.clearSpoofedPlayerName(playerId);
+        mobDisguise.clearPlayerAppearance(playerId);
     }
 
     /**
@@ -146,6 +148,7 @@ public final class DisguiseService {
         } else {
             mobDisguise.setSpoofedPlayerName(player.getUniqueId(), d.shownName());
             appearance.applyImpersonation(player, d.skin(), d.shownName());
+            mobDisguise.applyPlayerAppearance(player, d.playerOptions());
         }
     }
 
@@ -181,6 +184,7 @@ public final class DisguiseService {
             mobDisguise.detach((LivingEntity) target);
         }
         mobDisguise.clearSpoofedPlayerName(target.getUniqueId());
+        mobDisguise.clearPlayerAppearance(target.getUniqueId());
         appearance.restore(target, original, true);
         LOG.info("Disguise removed for {}", target.getUniqueId());
         return DisguiseResult.ok();
@@ -356,6 +360,13 @@ public final class DisguiseService {
         return skin.getDisplayName() == null || skin.getDisplayName().isBlank() ? requestedName.trim() : skin.getDisplayName();
     }
 
+    /** The name other players see: the display name option if given, otherwise the skin owner's name. */
+    private static String shownNameOf(SkinSnapshot skin, String requestedName, PlayerDisguiseOptions options) {
+        return options.displayName() != null
+            ? PlainTextComponentSerializer.plainText().serialize(options.displayName())
+            : shownNameOf(skin, requestedName);
+    }
+
     private CompletableFuture<DisguiseResult> scheduleApplyPlayer(
         Player target,
         SkinSnapshot skin,
@@ -370,9 +381,10 @@ public final class DisguiseService {
                     return;
                 }
                 prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_PLAYER);
-                String shown = shownNameOf(skin, requestedName);
+                String shown = shownNameOf(skin, requestedName, options);
                 mobDisguise.setSpoofedPlayerName(target.getUniqueId(), shown);
                 appearance.applyImpersonation(target, skin, shown);
+                mobDisguise.applyPlayerAppearance(target, options);
                 remember(target, StoredDisguise.player(skin, shown, options, originalsByPlayer.get(target.getUniqueId())));
                 LOG.info(
                     "Applied disguise for {} as '{}' (skin source {})",
@@ -391,6 +403,7 @@ public final class DisguiseService {
 
     private void prepareSubjectForNewDisguise(Player target, DisguiseSwitchMode mode) {
         mobDisguise.clearSpoofedPlayerName(target.getUniqueId());
+        mobDisguise.clearPlayerAppearance(target.getUniqueId());
         boolean wasMob = mobDisguise.isMobDisguised(target.getUniqueId());
         if (wasMob && mode == DisguiseSwitchMode.TO_MOB) {
             mobDisguise.detachDecoyOnly((LivingEntity) target);

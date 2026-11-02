@@ -76,6 +76,7 @@ import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPl
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerRotation;
 import io.papermc.paper.event.entity.EntityEquipmentChangedEvent;
 import io.papermc.paper.event.player.PlayerClientLoadedWorldEvent;
+import io.papermc.paper.event.player.PlayerTrackEntityEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.slf4j.Logger;
@@ -125,6 +126,12 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
      * player entity to its skin on the client.
      */
     private final Map<UUID, PlayerModel> playerModelByEntityUuid = new ConcurrentHashMap<>();
+    /**
+     * Appearance options of real players wearing a skin disguise, and the entity id they currently have, so server
+     * metadata updates for them can be patched in flight without turning them into a rewritten entity.
+     */
+    private final Map<UUID, PlayerDisguiseOptions> appearanceByPlayerUuid = new ConcurrentHashMap<>();
+    private final Map<Integer, UUID> appearanceEntityIds = new ConcurrentHashMap<>();
     /** Player-disguise name spoofing for player-info packets (tab list + overhead nameplate). */
     private final Map<UUID, String> spoofedNameByPlayerUuid = new ConcurrentHashMap<>();
     /**
@@ -418,10 +425,115 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         spoofedNameByPlayerUuid.remove(playerUuid);
     }
 
+    @Override
+    public void applyPlayerAppearance(Player player, PlayerDisguiseOptions options) {
+        UUID id = player.getUniqueId();
+        clearPlayerAppearance(id);
+        if (options == null) {
+            return;
+        }
+        appearanceByPlayerUuid.put(id, options);
+        appearanceEntityIds.put(player.getEntityId(), id);
+        for (Player observer : player.getWorld().getPlayers()) {
+            if (!observer.getUniqueId().equals(id)) {
+                sendPlayerAppearance(player, observer);
+            }
+        }
+    }
+
+    @Override
+    public void clearPlayerAppearance(UUID playerUuid) {
+        PlayerDisguiseOptions old = appearanceByPlayerUuid.remove(playerUuid);
+        appearanceEntityIds.values().removeIf(playerUuid::equals);
+        if (old != null && !old.isNametagVisible()) {
+            WrapperPlayServerTeams remove = new WrapperPlayServerTeams(
+                appearanceTeam(playerUuid), WrapperPlayServerTeams.TeamMode.REMOVE, Optional.empty(), List.of()
+            );
+            for (Player viewer : plugin.getServer().getOnlinePlayers()) {
+                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, remove);
+            }
+        }
+    }
+
+    /** Re-keys the appearance of a respawned player, whose new entity has a new id. */
+    private void rekeyPlayerAppearance(Player player) {
+        UUID id = player.getUniqueId();
+        if (!appearanceByPlayerUuid.containsKey(id)) {
+            return;
+        }
+        appearanceEntityIds.values().removeIf(id::equals);
+        appearanceEntityIds.put(player.getEntityId(), id);
+    }
+
+    private static String appearanceTeam(UUID playerUuid) {
+        return "fd_pa_" + playerUuid.toString().replace("-", "").substring(0, 10);
+    }
+
+    /**
+     * Sends the appearance options to one observer: the nameplate team, then the metadata and scale that the spawn
+     * bundle of a freshly tracked player cannot be patched for. Later server updates are patched in flight.
+     */
+    private void sendPlayerAppearance(Player subject, Player observer) {
+        UUID id = subject.getUniqueId();
+        PlayerDisguiseOptions options = appearanceByPlayerUuid.get(id);
+        if (options == null || !subject.isValid() || !observer.isOnline()) {
+            return;
+        }
+        var players = PacketEvents.getAPI().getPlayerManager();
+        if (!options.isNametagVisible()) {
+            String spoofed = spoofedNameByPlayerUuid.get(id);
+            String shownName = spoofed == null ? subject.getName() : spoofed.length() > 16 ? spoofed.substring(0, 16) : spoofed;
+            players.sendPacketSilently(observer, new WrapperPlayServerTeams(
+                appearanceTeam(id), WrapperPlayServerTeams.TeamMode.REMOVE, Optional.empty(), List.of()
+            ));
+            players.sendPacketSilently(observer, new WrapperPlayServerTeams(
+                appearanceTeam(id),
+                WrapperPlayServerTeams.TeamMode.CREATE,
+                Optional.of(new WrapperPlayServerTeams.ScoreBoardTeamInfo(
+                    Component.empty(),
+                    Component.empty(),
+                    Component.empty(),
+                    WrapperPlayServerTeams.NameTagVisibility.NEVER,
+                    WrapperPlayServerTeams.CollisionRule.ALWAYS,
+                    NamedTextColor.WHITE,
+                    WrapperPlayServerTeams.OptionData.NONE
+                )),
+                List.of(shownName)
+            ));
+        }
+        int flags = (subject.getFireTicks() > 0 ? 0x01 : 0)
+            | (subject.isSneaking() ? 0x02 : 0)
+            | (subject.isSprinting() ? 0x08 : 0)
+            | (subject.isSwimming() ? 0x10 : 0)
+            | (subject.isInvisible() ? 0x20 : 0)
+            | (subject.isGlowing() ? 0x40 : 0)
+            | (subject.isGliding() ? 0x80 : 0);
+        players.sendPacketSilently(observer, new WrapperPlayServerEntityMetadata(
+            subject.getEntityId(), MobDisguiseSyntheticMetadata.playerAppearanceUpdate(flags, options)
+        ));
+        if (options.effectiveSize() != 1.0) {
+            players.sendPacketSilently(observer, new WrapperPlayServerUpdateAttributes(
+                subject.getEntityId(),
+                List.of(new WrapperPlayServerUpdateAttributes.Property(Attributes.SCALE, options.effectiveSize(), List.of()))
+            ));
+        }
+    }
+
+    /** A viewer that starts tracking a skinned player (join, range, respawn) gets the appearance after the spawn. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onTrackPlayer(PlayerTrackEntityEvent event) {
+        if (!(event.getEntity() instanceof Player subject) || !appearanceByPlayerUuid.containsKey(subject.getUniqueId())) {
+            return;
+        }
+        Player observer = event.getPlayer();
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> sendPlayerAppearance(subject, observer), 3L);
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onRespawn(PlayerRespawnEvent event) {
         UUID sid = event.getPlayer().getUniqueId();
         scheduleObserverHeal(sid);
+        rekeyPlayerAppearance(event.getPlayer());
         if (!mobTypeByEntityUuid.containsKey(sid)) {
             return;
         }
@@ -1090,6 +1202,16 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                     event,
                     "mob disguise: ENTITY_METADATA rewrite eid=" + eid + " type=" + bukkitMob
                 );
+                return;
+            }
+            UUID skinnedPlayer = appearanceEntityIds.get(w.getEntityId());
+            PlayerDisguiseOptions appearance = skinnedPlayer == null ? null : appearanceByPlayerUuid.get(skinnedPlayer);
+            if (appearance != null && !skinnedPlayer.equals(event.getUser().getUUID())) {
+                List<EntityData<?>> patched = MobDisguiseSyntheticMetadata.patchPlayerMetadata(w.getEntityMetadata(), appearance);
+                if (patched != null) {
+                    w.setEntityMetadata(patched);
+                    event.markForReEncode(true);
+                }
             }
             return;
         }

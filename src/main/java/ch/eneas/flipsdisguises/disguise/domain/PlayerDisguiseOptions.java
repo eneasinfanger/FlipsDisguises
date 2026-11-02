@@ -85,6 +85,40 @@ public class PlayerDisguiseOptions {
         return (byte) mask;
     }
 
+    /** Applies the skin layer options to a skin-parts byte; unset layers keep what the player's client reports. */
+    public byte applyToSkinParts(int parts) {
+        int out = parts;
+        out = withBit(out, PART_CAPE, cape);
+        out = withBit(out, PART_JACKET, jacket);
+        out = withBit(out, PART_LEFT_SLEEVE, leftSleeve);
+        out = withBit(out, PART_RIGHT_SLEEVE, rightSleeve);
+        out = withBit(out, PART_LEFT_PANTS, leftPants);
+        out = withBit(out, PART_RIGHT_PANTS, rightPants);
+        out = withBit(out, PART_HAT, hat);
+        return (byte) out;
+    }
+
+    public boolean hasSkinPartOverrides() {
+        return cape != null || jacket != null || leftSleeve != null || rightSleeve != null
+            || leftPants != null || rightPants != null || hat != null;
+    }
+
+    /** Applies the glowing, burning and sneaking options to a shared-flags byte; unset options keep their bit. */
+    public byte applyToSharedFlags(int flags) {
+        int out = flags;
+        out = withBit(out, 0x40, glowing);
+        out = withBit(out, 0x01, burning == null || burning == TriState.NOT_SET ? null : burning == TriState.TRUE);
+        out = withBit(out, 0x02, sneaking);
+        return (byte) out;
+    }
+
+    private static int withBit(int flags, int bit, Boolean enabled) {
+        if (enabled == null) {
+            return flags;
+        }
+        return enabled ? flags | bit : flags & ~bit;
+    }
+
     public boolean isNametagVisible() {
         return nametagVisible == null || nametagVisible;
     }
