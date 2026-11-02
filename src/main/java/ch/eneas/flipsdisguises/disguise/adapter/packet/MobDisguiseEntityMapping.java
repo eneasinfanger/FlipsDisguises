@@ -87,7 +87,14 @@ public final class MobDisguiseEntityMapping {
         return bukkit != null && bukkitToPe.containsKey(bukkit);
     }
 
+    /**
+     * {@link EntityType#PLAYER} is not a valid mob disguise ({@link #isSupported} stays false), but a player-model
+     * disguise is spawned as one, so it still resolves here.
+     */
     public static com.github.retrooper.packetevents.protocol.entity.type.EntityType toPacketEntityType(EntityType bukkit) {
+        if (bukkit == EntityType.PLAYER) {
+            return EntityTypes.PLAYER;
+        }
         ensureBuilt();
         com.github.retrooper.packetevents.protocol.entity.type.EntityType pe = bukkitToPe.get(Objects.requireNonNull(bukkit, "bukkit"));
         if (pe == null) {

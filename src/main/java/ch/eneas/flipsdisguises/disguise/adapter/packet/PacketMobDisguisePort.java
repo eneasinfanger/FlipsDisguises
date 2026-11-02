@@ -4,6 +4,9 @@ import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.SkinProperty;
+import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
 import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
@@ -22,6 +25,12 @@ import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.protocol.player.ClientVersion;
 import com.github.retrooper.packetevents.protocol.player.User;
 import com.github.retrooper.packetevents.protocol.player.UserProfile;
+import com.github.retrooper.packetevents.protocol.player.GameMode;
+import com.github.retrooper.packetevents.protocol.player.TextureProperty;
+import com.github.retrooper.packetevents.protocol.attribute.Attributes;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoRemove;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateAttributes;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import io.github.retrooper.packetevents.util.SpigotConversionUtil;
 import com.github.retrooper.packetevents.protocol.entity.EntityPositionData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
@@ -92,6 +101,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -109,6 +119,12 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     private final Map<UUID, EntityType> mobTypeByEntityUuid = new ConcurrentHashMap<>();
     private final Map<UUID, MobDisguiseOptions> mobOptionsByEntityUuid = new ConcurrentHashMap<>();
     private final Map<Integer, UUID> disguisedEntityIds = new ConcurrentHashMap<>();
+    /**
+     * Entities shown as a player model. These are also in {@link #mobTypeByEntityUuid} with the type
+     * {@link EntityType#PLAYER}. The player-info profile uses the entity's own UUID, which is what ties the spawned
+     * player entity to its skin on the client.
+     */
+    private final Map<UUID, PlayerModel> playerModelByEntityUuid = new ConcurrentHashMap<>();
     /** Player-disguise name spoofing for player-info packets (tab list + overhead nameplate). */
     private final Map<UUID, String> spoofedNameByPlayerUuid = new ConcurrentHashMap<>();
     /**
@@ -259,7 +275,27 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         if (type == null) {
             return Optional.empty();
         }
+        PlayerModel model = playerModelByEntityUuid.get(entityUuid);
+        if (model != null) {
+            return Optional.of(StoredDisguise.player(model.skin(), model.shownName(), model.options(), null));
+        }
         return Optional.of(StoredDisguise.mob(type, mobOptionsByEntityUuid.get(entityUuid), null));
+    }
+
+    @Override
+    public void attachPlayerModel(LivingEntity subject, SkinSnapshot skin, String shownName, PlayerDisguiseOptions options) {
+        if (subject instanceof Player) {
+            throw new IllegalArgumentException("A player model can only be attached to a non-player entity");
+        }
+        UUID sid = subject.getUniqueId();
+        PlayerDisguiseOptions opts = options == null ? PlayerDisguiseOptions.DEFAULT : options;
+        playerModelByEntityUuid.put(sid, new PlayerModel(skin, shownName, opts, profileNameOf(shownName, opts)));
+        // PLAYER as the disguise type routes every spawn/metadata rewrite below through the player-model branches.
+        mobTypeByEntityUuid.put(sid, EntityType.PLAYER);
+        mobOptionsByEntityUuid.put(sid, MobDisguiseOptions.DEFAULT);
+        syncEntityId(subject);
+        refreshEquipmentPeFromBukkit(subject);
+        refreshEntityTrackers(subject);
     }
 
     @Override
@@ -287,13 +323,20 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         mobOptionsByEntityUuid.remove(sid);
         equipmentPeByEntityUuid.remove(sid);
         disguisedEntityIds.entrySet().removeIf(e -> e.getValue().equals(sid));
+        PlayerModel model = playerModelByEntityUuid.remove(sid);
         refreshEntityTrackers(subject);
+        if (model != null) {
+            // Only after the tracker refresh has destroyed the client entity: dropping the profile earlier would
+            // make the still-spawned player model fall back to the default skin for a moment.
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> removePlayerModelFromClients(sid, model), 5L);
+        }
     }
 
     @Override
     public void detachDecoyOnly(LivingEntity subject) {
         destroySelfDecoy(subject.getUniqueId());
         UUID sid = subject.getUniqueId();
+        playerModelByEntityUuid.remove(sid);
         mobTypeByEntityUuid.remove(sid);
         mobOptionsByEntityUuid.remove(sid);
         equipmentPeByEntityUuid.remove(sid);
@@ -303,6 +346,10 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     @Override
     public void detachDisconnected(UUID entityUuid) {
         destroySelfDecoy(entityUuid);
+        PlayerModel model = playerModelByEntityUuid.remove(entityUuid);
+        if (model != null) {
+            removePlayerModelFromClients(entityUuid, model);
+        }
         mobTypeByEntityUuid.remove(entityUuid);
         mobOptionsByEntityUuid.remove(entityUuid);
         equipmentPeByEntityUuid.remove(entityUuid);
@@ -1009,7 +1056,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 w.setEntityType(MobDisguiseEntityMapping.toPacketEntityType(bukkitMob));
                 ClientVersion cv = event.getUser().getClientVersion();
                 w.setEntityMetadata(new ArrayList<>(
-                    MobDisguiseSyntheticMetadata.fragment(cv, bukkitMob, optionsForEntityId(w.getEntityId()))
+                    disguiseMetadata(cv, w.getEntityId())
                 ));
                 if (bukkitMob == EntityType.ENDER_DRAGON) {
                     fixEnderDragonLivingSpawnAngles(w);
@@ -1030,7 +1077,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                 EntityType bukkitMob = bukkitMobType(eid);
                 ClientVersion cv = event.getUser().getClientVersion();
                 w.setEntityMetadata(new ArrayList<>(
-                    MobDisguiseSyntheticMetadata.fragment(cv, bukkitMob, optionsForEntityId(eid))
+                    disguiseMetadata(cv, eid)
                 ));
                 event.markForReEncode(true);
                 MobDisguisePacketTrace.logServerOutbound(
@@ -1184,7 +1231,35 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
      * is no Bukkit {@link Player} (e.g. non-player pipeline).
      */
     private void sendReplacementAfterPipeline(PacketSendEvent event, PacketWrapper<?> replacement) {
-        event.getPostTasks().add(() -> sendSilentlyToObserver(event, replacement));
+        UUID spawnedUuid = replacement instanceof WrapperPlayServerSpawnEntity se ? se.getUUID().orElse(null) : null;
+        int spawnedId = replacement instanceof WrapperPlayServerSpawnEntity se ? se.getEntityId() : -1;
+        event.getPostTasks().add(() -> {
+            for (PacketWrapper<?> prelude : playerModelPrelude(spawnedUuid)) {
+                stamp(prelude, event.getServerVersion(), event.getUser().getClientVersion());
+                sendSilentlyToObserver(event, prelude);
+            }
+            sendSilentlyToObserver(event, replacement);
+            for (PacketWrapper<?> postlude : playerModelPostlude(spawnedUuid, spawnedId)) {
+                stamp(postlude, event.getServerVersion(), event.getUser().getClientVersion());
+                sendSilentlyToObserver(event, postlude);
+            }
+        });
+    }
+
+    /** Adds {@code replacement} to a bundle's output, with the player-model packets it depends on around it. */
+    private void addSpawnReplacement(List<Object> outPackets, PacketSendEvent event, PacketWrapper<?> replacement) {
+        UUID spawnedUuid = replacement instanceof WrapperPlayServerSpawnEntity se ? se.getUUID().orElse(null) : null;
+        int spawnedId = replacement instanceof WrapperPlayServerSpawnEntity se ? se.getEntityId() : -1;
+        ClientVersion cv = event.getUser().getClientVersion();
+        for (PacketWrapper<?> prelude : playerModelPrelude(spawnedUuid)) {
+            stamp(prelude, event.getServerVersion(), cv);
+            outPackets.add(prelude);
+        }
+        outPackets.add(replacement);
+        for (PacketWrapper<?> postlude : playerModelPostlude(spawnedUuid, spawnedId)) {
+            stamp(postlude, event.getServerVersion(), cv);
+            outPackets.add(postlude);
+        }
     }
 
     /**
@@ -1291,7 +1366,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                             );
                             replacement.setServerVersion(event.getServerVersion());
                             replacement.setClientVersion(event.getUser().getClientVersion());
-                            outPackets.add(replacement);
+                            addSpawnReplacement(outPackets, event, replacement);
                         }
                     } else {
                         ByteBufHelper.readerIndex(buf, packetBegin);
@@ -1327,7 +1402,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                             );
                             replacement.setServerVersion(event.getServerVersion());
                             replacement.setClientVersion(event.getUser().getClientVersion());
-                            outPackets.add(replacement);
+                            addSpawnReplacement(outPackets, event, replacement);
                         }
                     } else {
                         ByteBufHelper.readerIndex(buf, packetBegin);
@@ -1349,7 +1424,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                             w.setEntityType(MobDisguiseEntityMapping.toPacketEntityType(bukkitMob));
                             ClientVersion cv = event.getUser().getClientVersion();
                             w.setEntityMetadata(new ArrayList<>(
-                                MobDisguiseSyntheticMetadata.fragment(cv, bukkitMob, optionsForEntityId(w.getEntityId()))
+                                disguiseMetadata(cv, w.getEntityId())
                             ));
                             if (bukkitMob == EntityType.ENDER_DRAGON) {
                                 fixEnderDragonLivingSpawnAngles(w);
@@ -1397,11 +1472,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
                             ClientVersion cvMeta = event.getUser().getClientVersion();
                             WrapperPlayServerEntityMetadata metaOut = new WrapperPlayServerEntityMetadata(
                                 eidMeta,
-                                new ArrayList<>(MobDisguiseSyntheticMetadata.fragment(
-                                    cvMeta,
-                                    bukkitMobMeta,
-                                    optionsForEntityId(eidMeta)
-                                ))
+                                new ArrayList<>(disguiseMetadata(cvMeta, eidMeta))
                             );
                             metaOut.setServerVersion(event.getServerVersion());
                             metaOut.setClientVersion(cvMeta);
@@ -1951,12 +2022,20 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
         ClientVersion cv = user.getClientVersion();
         WrapperPlayServerEntityMetadata metadata = new WrapperPlayServerEntityMetadata(
             eid,
-            new ArrayList<>(MobDisguiseSyntheticMetadata.fragment(cv, bukkitMob, opts))
+            new ArrayList<>(disguiseMetadata(cv, subject.getUniqueId(), bukkitMob, opts))
         );
 
         PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, new WrapperPlayServerDestroyEntities(eid));
+        for (PacketWrapper<?> prelude : playerModelPrelude(subject.getUniqueId())) {
+            stamp(prelude, spawn.getServerVersion(), cv);
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, prelude);
+        }
         PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, spawn);
         PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, metadata);
+        for (PacketWrapper<?> postlude : playerModelPostlude(subject.getUniqueId(), eid)) {
+            stamp(postlude, spawn.getServerVersion(), cv);
+            PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, postlude);
+        }
 
         EnumMap<EquipmentSlot, ItemStack> slots = equipmentPeByEntityUuid.get(subject.getUniqueId());
         if (slots != null && !slots.isEmpty()) {
@@ -1966,6 +2045,113 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             );
             PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, equipment);
         }
+    }
+
+    private record PlayerModel(SkinSnapshot skin, String shownName, PlayerDisguiseOptions options, String profileName) {
+    }
+
+    private static String profileNameOf(String shownName, PlayerDisguiseOptions options) {
+        String name = options.displayName() != null
+            ? PlainTextComponentSerializer.plainText().serialize(options.displayName())
+            : shownName;
+        if (name == null || name.isBlank()) {
+            name = "Player";
+        }
+        return name.length() > 16 ? name.substring(0, 16) : name;
+    }
+
+    /** Team that hides the nameplate of one player model; the name stays within the 16 characters a team allows. */
+    private static String playerModelTeam(UUID subjectUuid) {
+        return "fd_pm_" + subjectUuid.toString().replace("-", "").substring(0, 10);
+    }
+
+    /**
+     * Packets a viewer needs before the player-model spawn: an unlisted player-info entry carrying the skin (the
+     * client takes the skin of a spawned player from the entry with the same UUID) and, when the nameplate is
+     * hidden, the team that hides it. The entry stays on the client until {@link #removePlayerModelFromClients}.
+     */
+    private List<PacketWrapper<?>> playerModelPrelude(UUID subjectUuid) {
+        PlayerModel model = subjectUuid == null ? null : playerModelByEntityUuid.get(subjectUuid);
+        if (model == null) {
+            return List.of();
+        }
+        List<TextureProperty> textures = new ArrayList<>();
+        for (SkinProperty p : model.skin().getProperties()) {
+            textures.add(new TextureProperty(p.getName(), p.getValue(), p.getSignature()));
+        }
+        UserProfile profile = new UserProfile(subjectUuid, model.profileName(), textures);
+        List<PacketWrapper<?>> out = new ArrayList<>(3);
+        out.add(new WrapperPlayServerPlayerInfoUpdate(
+            EnumSet.of(
+                WrapperPlayServerPlayerInfoUpdate.Action.ADD_PLAYER,
+                WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_LISTED
+            ),
+            new WrapperPlayServerPlayerInfoUpdate.PlayerInfo(profile, false, 0, GameMode.SURVIVAL, null, null)
+        ));
+        if (!model.options().isNametagVisible()) {
+            String team = playerModelTeam(subjectUuid);
+            // A viewer that already has the team (a re-sent disguise) would reject a second create.
+            out.add(new WrapperPlayServerTeams(team, WrapperPlayServerTeams.TeamMode.REMOVE, Optional.empty(), List.of()));
+            out.add(new WrapperPlayServerTeams(
+                team,
+                WrapperPlayServerTeams.TeamMode.CREATE,
+                Optional.of(new WrapperPlayServerTeams.ScoreBoardTeamInfo(
+                    Component.empty(),
+                    Component.empty(),
+                    Component.empty(),
+                    WrapperPlayServerTeams.NameTagVisibility.NEVER,
+                    WrapperPlayServerTeams.CollisionRule.NEVER,
+                    NamedTextColor.WHITE,
+                    WrapperPlayServerTeams.OptionData.NONE
+                )),
+                List.of(model.profileName())
+            ));
+        }
+        return out;
+    }
+
+    /** Packets sent right after the player-model spawn: the scale, which is an attribute and not metadata. */
+    private List<PacketWrapper<?>> playerModelPostlude(UUID subjectUuid, int entityId) {
+        PlayerModel model = subjectUuid == null ? null : playerModelByEntityUuid.get(subjectUuid);
+        if (model == null || model.options().effectiveSize() == 1.0) {
+            return List.of();
+        }
+        return List.of(new WrapperPlayServerUpdateAttributes(
+            entityId,
+            List.of(new WrapperPlayServerUpdateAttributes.Property(Attributes.SCALE, model.options().effectiveSize(), List.of()))
+        ));
+    }
+
+    private void removePlayerModelFromClients(UUID subjectUuid, PlayerModel model) {
+        List<PacketWrapper<?>> packets = new ArrayList<>(2);
+        packets.add(new WrapperPlayServerPlayerInfoRemove(subjectUuid));
+        if (!model.options().isNametagVisible()) {
+            packets.add(new WrapperPlayServerTeams(
+                playerModelTeam(subjectUuid), WrapperPlayServerTeams.TeamMode.REMOVE, Optional.empty(), List.of()
+            ));
+        }
+        for (Player viewer : plugin.getServer().getOnlinePlayers()) {
+            for (PacketWrapper<?> packet : packets) {
+                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(viewer, packet);
+            }
+        }
+    }
+
+    private static void stamp(PacketWrapper<?> packet, ServerVersion serverVersion, ClientVersion clientVersion) {
+        packet.setServerVersion(serverVersion);
+        packet.setClientVersion(clientVersion);
+    }
+
+    /** Spawn/metadata of a disguised entity: the player model's own metadata, or the mob's synthetic metadata. */
+    private List<EntityData<?>> disguiseMetadata(ClientVersion cv, UUID subjectUuid, EntityType type, MobDisguiseOptions opts) {
+        PlayerModel model = type == EntityType.PLAYER ? playerModelByEntityUuid.get(subjectUuid) : null;
+        return model != null
+            ? MobDisguiseSyntheticMetadata.playerFragment(model.options())
+            : MobDisguiseSyntheticMetadata.fragment(cv, type, opts);
+    }
+
+    private List<EntityData<?>> disguiseMetadata(ClientVersion cv, int entityId) {
+        return disguiseMetadata(cv, disguisedEntityIds.get(entityId), bukkitMobType(entityId), optionsForEntityId(entityId));
     }
 
     /**

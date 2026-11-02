@@ -1,6 +1,8 @@
 package ch.eneas.flipsdisguises.disguise.adapter.packet;
 
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
+import com.github.retrooper.packetevents.protocol.player.HumanoidArm;
 import com.github.retrooper.packetevents.protocol.entity.axolotl.AxolotlVariant;
 import com.github.retrooper.packetevents.protocol.entity.axolotl.AxolotlVariants;
 import com.github.retrooper.packetevents.protocol.entity.cat.CatVariant;
@@ -64,6 +66,9 @@ public final class MobDisguiseSyntheticMetadata {
     private static final int IDX_ZOMBIE_VILLAGER_DATA = 20;
     private static final int IDX_HORSE_FLAGS = 17;
     private static final int IDX_HORSE_TYPE_VARIANT = 18;
+    // Avatar (player) indices since 1.21.9: main arm first, then the displayed skin layers.
+    private static final int IDX_AVATAR_MAIN_HAND = 15;
+    private static final int IDX_AVATAR_SKIN_PARTS = 16;
 
     private MobDisguiseSyntheticMetadata() {
     }
@@ -173,6 +178,41 @@ public final class MobDisguiseSyntheticMetadata {
         if (mob == EntityType.DONKEY || mob == EntityType.MULE) {
             list.add(new EntityData<>(IDX_HORSE_FLAGS, EntityDataTypes.BYTE, horseFamilyFlags(opts)));
         }
+        return list;
+    }
+
+    /**
+     * Metadata for a player-model disguise. Only the shared flags and the avatar indices are sent, never the
+     * original entity's metadata: the overhead name of a player comes from its profile and team, so no custom name
+     * is sent either.
+     */
+    public static List<EntityData<?>> playerFragment(PlayerDisguiseOptions o) {
+        PlayerDisguiseOptions opts = o == null ? PlayerDisguiseOptions.DEFAULT : o;
+        List<EntityData<?>> list = new ArrayList<>();
+        int bits = 0;
+        if (Boolean.TRUE.equals(opts.glowing())) {
+            bits |= 0x40;
+        }
+        if (Boolean.TRUE.equals(opts.sneaking())) {
+            bits |= 0x02;
+        }
+        if (opts.burning() == TriState.TRUE) {
+            bits |= 0x01;
+        }
+        list.add(new EntityData<>(IDX_SHARED_FLAGS, EntityDataTypes.BYTE, (byte) (bits & 0xFF)));
+        if (opts.silent() != null) {
+            list.add(new EntityData<>(IDX_SILENT, EntityDataTypes.BOOLEAN, opts.silent()));
+        }
+        Pose pose = opts.pose() != null ? opts.pose() : Boolean.TRUE.equals(opts.sneaking()) ? Pose.SNEAKING : null;
+        if (pose != null) {
+            list.add(new EntityData<>(IDX_POSE, EntityDataTypes.ENTITY_POSE, bukkitPoseToPe(pose)));
+        }
+        list.add(new EntityData<>(
+            IDX_AVATAR_MAIN_HAND,
+            EntityDataTypes.HUMANOID_ARM,
+            Boolean.TRUE.equals(opts.leftHanded()) ? HumanoidArm.LEFT : HumanoidArm.RIGHT
+        ));
+        list.add(new EntityData<>(IDX_AVATAR_SKIN_PARTS, EntityDataTypes.BYTE, opts.skinPartsMask()));
         return list;
     }
 

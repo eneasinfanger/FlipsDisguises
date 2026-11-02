@@ -1,6 +1,8 @@
 package ch.eneas.flipsdisguises.disguise.port;
 
 import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
+import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
 import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
@@ -14,8 +16,8 @@ public interface MobDisguisePort {
     boolean isMobDisguised(UUID entityUuid);
 
     /**
-     * The mob disguise currently attached to this entity, as a {@link StoredDisguise} of kind {@code MOB}
-     * (without an original look, which the port does not track).
+     * The disguise currently attached to this entity, as a {@link StoredDisguise} of kind {@code MOB} (or
+     * {@code PLAYER} for a player model), without an original look, which the port does not track.
      */
     Optional<StoredDisguise> mobDisguiseOf(UUID entityUuid);
 
@@ -24,6 +26,14 @@ public interface MobDisguisePort {
     }
 
     void attach(LivingEntity subject, EntityType type, MobDisguiseOptions options);
+
+    /**
+     * Shows a non-player entity as a player model wearing {@code skin}. The disguise is reported by
+     * {@link #mobDisguiseOf} as a {@code PLAYER} disguise.
+     *
+     * @param shownName the name of the player model unless {@code options} carries a display name
+     */
+    void attachPlayerModel(LivingEntity subject, SkinSnapshot skin, String shownName, PlayerDisguiseOptions options);
 
     void detach(LivingEntity subject);
 
