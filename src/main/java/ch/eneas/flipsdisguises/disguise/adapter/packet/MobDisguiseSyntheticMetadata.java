@@ -212,7 +212,10 @@ public final class MobDisguiseSyntheticMetadata {
                 }
                 case IDX_AVATAR_MAIN_HAND -> {
                     if (o.leftHanded() != null) {
-                        replacement = new EntityData<>(IDX_AVATAR_MAIN_HAND, EntityDataTypes.HUMANOID_ARM, mainHand(o));
+                        // Keep whichever type the server used for this entry.
+                        replacement = value instanceof HumanoidArm
+                            ? new EntityData<>(IDX_AVATAR_MAIN_HAND, EntityDataTypes.HUMANOID_ARM, mainHand(o))
+                            : new EntityData<>(IDX_AVATAR_MAIN_HAND, EntityDataTypes.BYTE, (byte) mainHand(o).getId());
                     }
                 }
                 case IDX_AVATAR_SKIN_PARTS -> {
@@ -235,7 +238,7 @@ public final class MobDisguiseSyntheticMetadata {
      *
      * @param currentFlags the player's shared-flags byte as the server has it
      */
-    public static List<EntityData<?>> playerAppearanceUpdate(int currentFlags, PlayerDisguiseOptions o) {
+    public static List<EntityData<?>> playerAppearanceUpdate(ClientVersion cv, int currentFlags, PlayerDisguiseOptions o) {
         List<EntityData<?>> list = new ArrayList<>();
         list.add(new EntityData<>(IDX_SHARED_FLAGS, EntityDataTypes.BYTE, o.applyToSharedFlags(currentFlags)));
         if (o.silent() != null) {
@@ -246,7 +249,7 @@ public final class MobDisguiseSyntheticMetadata {
             list.add(new EntityData<>(IDX_POSE, EntityDataTypes.ENTITY_POSE, bukkitPoseToPe(pose)));
         }
         if (o.leftHanded() != null) {
-            list.add(new EntityData<>(IDX_AVATAR_MAIN_HAND, EntityDataTypes.HUMANOID_ARM, mainHand(o)));
+            list.add(mainHandEntry(cv, o));
         }
         if (o.hasSkinPartOverrides()) {
             list.add(new EntityData<>(IDX_AVATAR_SKIN_PARTS, EntityDataTypes.BYTE, o.skinPartsMask()));
@@ -263,11 +266,30 @@ public final class MobDisguiseSyntheticMetadata {
     }
 
     /**
+     * The main hand is a {@code humanoid_arm} only from 1.21.11; before that it is a byte (0 left, 1 right).
+     * Writing a type the client version has no id for makes PacketEvents emit id -1, which disconnects the client.
+     */
+    private static EntityData<?> mainHandEntry(ClientVersion cv, PlayerDisguiseOptions o) {
+        if (hasHumanoidArmType(cv)) {
+            return new EntityData<>(IDX_AVATAR_MAIN_HAND, EntityDataTypes.HUMANOID_ARM, mainHand(o));
+        }
+        return new EntityData<>(IDX_AVATAR_MAIN_HAND, EntityDataTypes.BYTE, (byte) mainHand(o).getId());
+    }
+
+    private static boolean hasHumanoidArmType(ClientVersion cv) {
+        try {
+            return EntityDataTypes.HUMANOID_ARM.getId(cv) >= 0;
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
+    /**
      * Metadata for a player-model disguise. Only the shared flags and the avatar indices are sent, never the
      * original entity's metadata: the overhead name of a player comes from its profile and team, so no custom name
      * is sent either.
      */
-    public static List<EntityData<?>> playerFragment(PlayerDisguiseOptions o) {
+    public static List<EntityData<?>> playerFragment(ClientVersion cv, PlayerDisguiseOptions o) {
         PlayerDisguiseOptions opts = o == null ? PlayerDisguiseOptions.DEFAULT : o;
         List<EntityData<?>> list = new ArrayList<>();
         int bits = 0;
@@ -288,11 +310,7 @@ public final class MobDisguiseSyntheticMetadata {
         if (pose != null) {
             list.add(new EntityData<>(IDX_POSE, EntityDataTypes.ENTITY_POSE, bukkitPoseToPe(pose)));
         }
-        list.add(new EntityData<>(
-            IDX_AVATAR_MAIN_HAND,
-            EntityDataTypes.HUMANOID_ARM,
-            Boolean.TRUE.equals(opts.leftHanded()) ? HumanoidArm.LEFT : HumanoidArm.RIGHT
-        ));
+        list.add(mainHandEntry(cv, opts));
         list.add(new EntityData<>(IDX_AVATAR_SKIN_PARTS, EntityDataTypes.BYTE, opts.skinPartsMask()));
         return list;
     }

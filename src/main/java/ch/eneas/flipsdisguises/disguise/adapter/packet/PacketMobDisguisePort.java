@@ -509,7 +509,9 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
             | (subject.isGlowing() ? 0x40 : 0)
             | (subject.isGliding() ? 0x80 : 0);
         players.sendPacketSilently(observer, new WrapperPlayServerEntityMetadata(
-            subject.getEntityId(), MobDisguiseSyntheticMetadata.playerAppearanceUpdate(flags, options)
+            subject.getEntityId(), MobDisguiseSyntheticMetadata.playerAppearanceUpdate(
+                players.getClientVersion(observer), flags, options
+            )
         ));
         if (options.effectiveSize() != 1.0) {
             players.sendPacketSilently(observer, new WrapperPlayServerUpdateAttributes(
@@ -2272,7 +2274,7 @@ public final class PacketMobDisguisePort implements MobDisguisePort, PacketListe
     private List<EntityData<?>> disguiseMetadata(ClientVersion cv, UUID subjectUuid, EntityType type, MobDisguiseOptions opts) {
         PlayerModel model = type == EntityType.PLAYER ? playerModelByEntityUuid.get(subjectUuid) : null;
         return model != null
-            ? MobDisguiseSyntheticMetadata.playerFragment(model.options())
+            ? MobDisguiseSyntheticMetadata.playerFragment(cv, model.options())
             : MobDisguiseSyntheticMetadata.fragment(cv, type, opts);
     }
 
