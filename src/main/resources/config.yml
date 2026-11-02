@@ -8,3 +8,7 @@ commands-enabled: true
 # plus a few client packets. Enable mob-disguise-packet-trace-all-play for every Play packet (very noisy).
 mob-disguise-packet-trace: false
 mob-disguise-packet-trace-all-play: false
+
+# Log a lot more information useful for reporting bugs.
+# 0 = no debug information
+trace-level: 0

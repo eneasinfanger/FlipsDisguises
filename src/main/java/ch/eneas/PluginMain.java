@@ -35,8 +35,16 @@ public class PluginMain extends JavaPlugin {
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
-        FlipsLoader.getLoader().initPluginClasses(this, c -> c.ignoredPackages(List.of(SHADED_PACKAGE))
-            .debugLoader(DebugCategory.CLASS_LOADING, DebugCategory.INITIALIZATION));
+        int traceLvl = getConfig().getInt("trace-level", 0);
+        FlipsLoader.getLoader().initPluginClasses(this, c -> {
+            c.ignoredPackages(List.of(SHADED_PACKAGE));
+            if (traceLvl >= 1) {
+                c.debugLoader(DebugCategory.INITIALIZATION);
+            }
+            if (traceLvl >= 2) {
+                c.debugLoader(DebugCategory.CLASS_LOADING, DebugCategory.INJECTION);
+            }
+        });
         loaderStarted = true;
     }
 
