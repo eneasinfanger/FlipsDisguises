@@ -5,6 +5,7 @@ import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
 import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
 import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,14 +14,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class DisguiseServiceTest {
@@ -40,7 +38,6 @@ class DisguiseServiceTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(syncTasks.rateLimitMillis()).thenReturn(0L);
         lenient().doAnswer(invocation -> {
             invocation.getArgument(0, Runnable.class).run();
             return null;
@@ -59,14 +56,18 @@ class DisguiseServiceTest {
     }
 
     @Test
-    void rateLimitBlocksSecondCommand() {
-        when(syncTasks.rateLimitMillis()).thenReturn(60_000L);
-        when(skins.resolveUsername(any())).thenReturn(new CompletableFuture<>());
+    void disguiseLivingAsMobRejectsPlayers() {
         DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, store);
-        Player initiator = mock(Player.class);
-        when(initiator.getUniqueId()).thenReturn(UUID.randomUUID());
-        svc.disguiseAsNamedPlayer(initiator, target, "first");
-        DisguiseResult second = svc.disguiseAsNamedPlayer(initiator, target, "second").join();
-        assertInstanceOf(DisguiseResult.Failure.class, second);
+        DisguiseResult r = svc.disguiseLivingAsMob(target, EntityType.ZOMBIE, null);
+        assertInstanceOf(DisguiseResult.Failure.class, r);
+        verifyNoInteractions(appearance, mobDisguise, store);
+    }
+
+    @Test
+    void disguiseAsNamedPlayerWithBlankNameFails() {
+        DisguiseService svc = new DisguiseService(syncTasks, skins, appearance, mobDisguise, store);
+        DisguiseResult r = svc.disguiseAsNamedPlayer(target, "  ").join();
+        assertInstanceOf(DisguiseResult.Failure.class, r);
+        verifyNoInteractions(skins);
     }
 }

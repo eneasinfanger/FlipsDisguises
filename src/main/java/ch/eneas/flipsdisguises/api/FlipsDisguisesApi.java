@@ -9,17 +9,29 @@ import org.bukkit.entity.Player;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Every method that changes a disguise must be called from the main server thread and throws
+ * {@link IllegalStateException} otherwise. The result takes effect immediately, except for
+ * {@link #disguisePlayerAsPlayer}, which looks the skin up asynchronously.
+ */
 public interface FlipsDisguisesApi {
 
+    /**
+     * Disguises the player with the skin and name of {@code skinUsername}. The skin lookup is asynchronous; the
+     * returned future completes on the main thread once the disguise is applied (or has failed).
+     */
     CompletableFuture<DisguiseResult> disguisePlayerAsPlayer(Player target, String skinUsername);
 
-    CompletableFuture<DisguiseResult> disguisePlayerAsMob(Player target, EntityType mobType);
+    DisguiseResult disguisePlayerAsMob(Player target, EntityType mobType);
 
-    CompletableFuture<DisguiseResult> disguisePlayerAsMob(Player target, EntityType mobType, MobDisguiseOptions options);
+    DisguiseResult disguisePlayerAsMob(Player target, EntityType mobType, MobDisguiseOptions options);
 
-    CompletableFuture<DisguiseResult> disguiseLivingAsMob(LivingEntity target, EntityType mobType);
+    /**
+     * Disguises a non-player entity. Players are rejected; use {@link #disguisePlayerAsMob} for them.
+     */
+    DisguiseResult disguiseLivingAsMob(LivingEntity target, EntityType mobType);
 
-    CompletableFuture<DisguiseResult> disguiseLivingAsMob(LivingEntity target, EntityType mobType, MobDisguiseOptions options);
+    DisguiseResult disguiseLivingAsMob(LivingEntity target, EntityType mobType, MobDisguiseOptions options);
 
     DisguiseResult undisguise(Player target);
 

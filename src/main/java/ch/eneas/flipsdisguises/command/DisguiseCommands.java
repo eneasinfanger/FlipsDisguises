@@ -30,11 +30,13 @@ import java.util.List;
 public final class DisguiseCommands implements CommandRegister {
     private final PluginMain plugin;
     private final DisguiseService disguiseService;
+    private final CommandRateLimiter rateLimiter;
 
     @Inject
-    public DisguiseCommands(PluginMain plugin, DisguiseService disguiseService) {
+    public DisguiseCommands(PluginMain plugin, DisguiseService disguiseService, CommandRateLimiter rateLimiter) {
         this.plugin = plugin;
         this.disguiseService = disguiseService;
+        this.rateLimiter = rateLimiter;
     }
 
     @Override
@@ -76,9 +78,11 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
+                if (!allowed(sender)) {
+                    return;
+                }
                 MobDisguiseOptions opts = args.getUnchecked("mobFlags");
-                disguiseService.disguiseAsMob(sender, target, type, opts).thenAccept(result ->
-                    plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
+                reply(sender, disguiseService.disguiseAsMob(target, type, opts));
             });
     }
 
@@ -125,25 +129,30 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                final int skippedSelections = nonLiving;
-                disguiseService.disguiseNonPlayerLivingMobsBatch(sender, living, type, opts).thenAccept(counts -> {
-                    int ok = counts[0];
-                    int fail = counts[1] + skippedSelections;
-                    plugin.getServer().getScheduler().runTask(plugin, () -> {
-                        if (ok > 0) {
-                            sender.sendMessage(Component.text(
-                                "Applied mob disguise to " + ok + " entit" + (ok == 1 ? "y" : "ies") + ".",
-                                NamedTextColor.GREEN
-                            ));
-                        }
-                        if (fail > 0) {
-                            sender.sendMessage(Component.text(
-                                fail + " selection(s) skipped or failed.",
-                                NamedTextColor.YELLOW
-                            ));
-                        }
-                    });
-                });
+                if (!allowed(sender)) {
+                    return;
+                }
+                int ok = 0;
+                int fail = nonLiving;
+                for (LivingEntity le : living) {
+                    if (disguiseService.disguiseLivingAsMob(le, type, opts) instanceof DisguiseResult.Ok) {
+                        ok++;
+                    } else {
+                        fail++;
+                    }
+                }
+                if (ok > 0) {
+                    sender.sendMessage(Component.text(
+                        "Applied mob disguise to " + ok + " entit" + (ok == 1 ? "y" : "ies") + ".",
+                        NamedTextColor.GREEN
+                    ));
+                }
+                if (fail > 0) {
+                    sender.sendMessage(Component.text(
+                        fail + " selection(s) skipped or failed.",
+                        NamedTextColor.YELLOW
+                    ));
+                }
             });
     }
 
@@ -196,7 +205,10 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                disguiseService.disguiseAsNamedPlayer(sender, target, skinName).thenAccept(result ->
+                if (!allowed(sender)) {
+                    return;
+                }
+                disguiseService.disguiseAsNamedPlayer(target, skinName).thenAccept(result ->
                     plugin.getServer().getScheduler().runTask(plugin, () -> reply(sender, result)));
             });
     }
@@ -275,6 +287,14 @@ public final class DisguiseCommands implements CommandRegister {
                 }
                 reply(sender, disguiseService.undisguise(target));
             });
+    }
+
+    private boolean allowed(CommandSender sender) {
+        if (rateLimiter.tryAcquire(sender)) {
+            return true;
+        }
+        sender.sendMessage(Component.text("Slow down.", NamedTextColor.RED));
+        return false;
     }
 
     private static void reply(CommandSender sender, DisguiseResult result) {

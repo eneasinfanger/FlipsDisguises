@@ -14,14 +14,12 @@ import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
 import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import org.bukkit.command.CommandSender;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,7 +38,6 @@ public final class DisguiseService {
     private final DisguiseStore store;
     private final Map<UUID, PlayerLookBackup> originalsByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, StoredDisguise> activeByPlayer = new ConcurrentHashMap<>();
-    private final Map<UUID, Long> lastActionByInitiator = new ConcurrentHashMap<>();
 
     @Inject
     public DisguiseService(
@@ -173,12 +170,11 @@ public final class DisguiseService {
         return DisguiseResult.ok();
     }
 
-    public CompletableFuture<DisguiseResult> disguiseAsNamedPlayer(CommandSender initiator, Player target, String skinOwner) {
-        if (initiator instanceof Player p && !rateAllowed(p.getUniqueId())) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Slow down.", NamedTextColor.RED))
-            );
-        }
+    /**
+     * Resolves the skin asynchronously, then applies it on the main thread; the returned future completes there
+     * (or on the lookup thread if the lookup itself failed).
+     */
+    public CompletableFuture<DisguiseResult> disguiseAsNamedPlayer(Player target, String skinOwner) {
         String owner = skinOwner.trim();
         if (owner.isEmpty()) {
             return CompletableFuture.completedFuture(
@@ -189,236 +185,66 @@ public final class DisguiseService {
             LOG.error("Failed to resolve skin profile '{}' for {}", owner, target.getUniqueId(), ex);
             return DisguiseResult.failure(Component.text("Could not resolve that player.", NamedTextColor.RED));
         });
-    }
-
-    public CompletableFuture<DisguiseResult> disguiseAsNamedPlayerApi(Player target, String skinOwner) {
-        String owner = skinOwner.trim();
-        if (owner.isEmpty()) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Player name required.", NamedTextColor.RED))
-            );
-        }
-        return skins.resolveUsername(owner).thenCompose(skin -> scheduleApplyPlayer(target, skin, owner)).exceptionally(ex -> {
-            LOG.error("Failed to resolve skin profile '{}' for {}", owner, target.getUniqueId(), ex);
-            return DisguiseResult.failure(Component.text("Could not resolve that player.", NamedTextColor.RED));
-        });
-    }
-
-    public CompletableFuture<DisguiseResult> disguiseAsMob(CommandSender initiator, Player target, EntityType type) {
-        return disguiseAsMob(initiator, target, type, MobDisguiseOptions.DEFAULT);
-    }
-
-    public CompletableFuture<DisguiseResult> disguiseAsMob(
-        CommandSender initiator,
-        Player target,
-        EntityType type,
-        MobDisguiseOptions options
-    ) {
-        if (initiator instanceof Player p && !rateAllowed(p.getUniqueId())) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Slow down.", NamedTextColor.RED))
-            );
-        }
-        if (!MobDisguiseEntityMapping.isSupported(type)) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text(
-                    "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped).",
-                    NamedTextColor.RED
-                ))
-            );
-        }
-        MobDisguiseOptions opts = options == null ? MobDisguiseOptions.DEFAULT : options;
-        CompletableFuture<DisguiseResult> done = new CompletableFuture<>();
-        syncTasks.runSync(() -> {
-            try {
-                if (!target.isOnline()) {
-                    done.complete(DisguiseResult.failure(Component.text("Target went offline.", NamedTextColor.RED)));
-                    return;
-                }
-                prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_MOB);
-                if (opts.displayName() != null) {
-                    appearance.applyMobLabels(target, type, opts.displayName());
-                } else {
-                    appearance.applyMobLabels(target, type);
-                }
-                mobDisguise.attach((LivingEntity) target, type, opts);
-                rememberMob(target, type, opts);
-                LOG.info("Applied mob disguise for {} as {}", target.getUniqueId(), type);
-                done.complete(DisguiseResult.ok());
-            } catch (Exception ex) {
-                LOG.error("Failed mob disguise for {}", target.getUniqueId(), ex);
-                done.complete(DisguiseResult.failure(Component.text("Could not apply mob disguise.", NamedTextColor.RED)));
-            }
-        });
-        return done;
-    }
-
-    public CompletableFuture<DisguiseResult> disguiseAsMobApi(Player target, EntityType type) {
-        return disguiseAsMobApi(target, type, MobDisguiseOptions.DEFAULT);
-    }
-
-    public CompletableFuture<DisguiseResult> disguiseAsMobApi(Player target, EntityType type, MobDisguiseOptions options) {
-        if (!MobDisguiseEntityMapping.isSupported(type)) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text(
-                    "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped).",
-                    NamedTextColor.RED
-                ))
-            );
-        }
-        MobDisguiseOptions opts = options == null ? MobDisguiseOptions.DEFAULT : options;
-        CompletableFuture<DisguiseResult> done = new CompletableFuture<>();
-        syncTasks.runSync(() -> {
-            try {
-                if (!target.isOnline()) {
-                    done.complete(DisguiseResult.failure(Component.text("Target went offline.", NamedTextColor.RED)));
-                    return;
-                }
-                prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_MOB);
-                if (opts.displayName() != null) {
-                    appearance.applyMobLabels(target, type, opts.displayName());
-                } else {
-                    appearance.applyMobLabels(target, type);
-                }
-                mobDisguise.attach((LivingEntity) target, type, opts);
-                rememberMob(target, type, opts);
-                LOG.info("Applied mob disguise (API) for {} as {}", target.getUniqueId(), type);
-                done.complete(DisguiseResult.ok());
-            } catch (Exception ex) {
-                LOG.error("Failed mob disguise for {}", target.getUniqueId(), ex);
-                done.complete(DisguiseResult.failure(Component.text("Could not apply mob disguise.", NamedTextColor.RED)));
-            }
-        });
-        return done;
-    }
-
-    public CompletableFuture<DisguiseResult> disguiseLivingAsMob(CommandSender initiator, LivingEntity target, EntityType type) {
-        return disguiseLivingAsMob(initiator, target, type, MobDisguiseOptions.DEFAULT);
-    }
-
-    public CompletableFuture<DisguiseResult> disguiseLivingAsMob(
-        CommandSender initiator,
-        LivingEntity target,
-        EntityType type,
-        MobDisguiseOptions options
-    ) {
-        if (initiator instanceof Player p && !rateAllowed(p.getUniqueId())) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Slow down.", NamedTextColor.RED))
-            );
-        }
-        if (!MobDisguiseEntityMapping.isSupported(type)) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text(
-                    "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped).",
-                    NamedTextColor.RED
-                ))
-            );
-        }
-        if (target instanceof Player) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Use /disguise mob for players.", NamedTextColor.RED))
-            );
-        }
-        MobDisguiseOptions opts = options == null ? MobDisguiseOptions.DEFAULT : options;
-        CompletableFuture<DisguiseResult> done = new CompletableFuture<>();
-        syncTasks.runSync(() -> {
-            try {
-                if (!target.isValid()) {
-                    done.complete(DisguiseResult.failure(Component.text("That entity is no longer valid.", NamedTextColor.RED)));
-                    return;
-                }
-                mobDisguise.attach(target, type, opts);
-                persistLivingMob(target, type, opts);
-                LOG.info("Applied entity mob disguise for {} ({}) as {}", target.getUniqueId(), target.getType(), type);
-                done.complete(DisguiseResult.ok());
-            } catch (Exception ex) {
-                LOG.error("Failed entity mob disguise for {}", target.getUniqueId(), ex);
-                done.complete(DisguiseResult.failure(Component.text("Could not apply mob disguise to that entity.", NamedTextColor.RED)));
-            }
-        });
-        return done;
     }
 
     /**
-     * Applies the same mob model to several non-player living entities in one server tick (avoids async deadlocks from the command thread).
+     * Must run on the main thread.
      */
-    public CompletableFuture<int[]> disguiseNonPlayerLivingMobsBatch(CommandSender initiator, List<LivingEntity> targets, EntityType type) {
-        return disguiseNonPlayerLivingMobsBatch(initiator, targets, type, MobDisguiseOptions.DEFAULT);
-    }
-
-    public CompletableFuture<int[]> disguiseNonPlayerLivingMobsBatch(
-        CommandSender initiator,
-        List<LivingEntity> targets,
-        EntityType type,
-        MobDisguiseOptions options
-    ) {
-        if (initiator instanceof Player p && !rateAllowed(p.getUniqueId())) {
-            return CompletableFuture.completedFuture(new int[] {0, targets.size()});
-        }
+    public DisguiseResult disguiseAsMob(Player target, EntityType type, MobDisguiseOptions options) {
         if (!MobDisguiseEntityMapping.isSupported(type)) {
-            return CompletableFuture.completedFuture(new int[] {0, targets.size()});
+            return unsupportedMobType();
         }
         MobDisguiseOptions opts = options == null ? MobDisguiseOptions.DEFAULT : options;
-        CompletableFuture<int[]> done = new CompletableFuture<>();
-        syncTasks.runSync(() -> {
-            int ok = 0;
-            int skip = 0;
-            for (LivingEntity le : targets) {
-                if (le instanceof Player) {
-                    skip++;
-                    continue;
-                }
-                if (!le.isValid()) {
-                    skip++;
-                    continue;
-                }
-                try {
-                    mobDisguise.attach(le, type, opts);
-                    persistLivingMob(le, type, opts);
-                    ok++;
-                    LOG.info("Applied entity mob disguise for {} ({}) as {}", le.getUniqueId(), le.getType(), type);
-                } catch (Exception ex) {
-                    skip++;
-                    LOG.error("Failed entity mob disguise for {}", le.getUniqueId(), ex);
-                }
+        if (!target.isOnline()) {
+            return DisguiseResult.failure(Component.text("Target is not online.", NamedTextColor.RED));
+        }
+        try {
+            prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_MOB);
+            if (opts.displayName() != null) {
+                appearance.applyMobLabels(target, type, opts.displayName());
+            } else {
+                appearance.applyMobLabels(target, type);
             }
-            done.complete(new int[] {ok, skip});
-        });
-        return done;
+            mobDisguise.attach((LivingEntity) target, type, opts);
+            rememberMob(target, type, opts);
+            LOG.info("Applied mob disguise for {} as {}", target.getUniqueId(), type);
+            return DisguiseResult.ok();
+        } catch (Exception ex) {
+            LOG.error("Failed mob disguise for {}", target.getUniqueId(), ex);
+            return DisguiseResult.failure(Component.text("Could not apply mob disguise.", NamedTextColor.RED));
+        }
     }
 
-    public CompletableFuture<DisguiseResult> disguiseLivingAsMobApi(LivingEntity target, EntityType type) {
-        return disguiseLivingAsMobApi(target, type, MobDisguiseOptions.DEFAULT);
-    }
-
-    public CompletableFuture<DisguiseResult> disguiseLivingAsMobApi(LivingEntity target, EntityType type, MobDisguiseOptions options) {
+    /**
+     * Must run on the main thread. Players are rejected here; use {@link #disguiseAsMob} for them.
+     */
+    public DisguiseResult disguiseLivingAsMob(LivingEntity target, EntityType type, MobDisguiseOptions options) {
+        if (target instanceof Player) {
+            return DisguiseResult.failure(Component.text("Use /disguise mob for players.", NamedTextColor.RED));
+        }
         if (!MobDisguiseEntityMapping.isSupported(type)) {
-            return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text(
-                    "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped).",
-                    NamedTextColor.RED
-                ))
-            );
+            return unsupportedMobType();
         }
         MobDisguiseOptions opts = options == null ? MobDisguiseOptions.DEFAULT : options;
-        CompletableFuture<DisguiseResult> done = new CompletableFuture<>();
-        syncTasks.runSync(() -> {
-            try {
-                if (!target.isValid()) {
-                    done.complete(DisguiseResult.failure(Component.text("That entity is no longer valid.", NamedTextColor.RED)));
-                    return;
-                }
-                mobDisguise.attach(target, type, opts);
-                persistLivingMob(target, type, opts);
-                LOG.info("Applied entity mob disguise (API) for {} as {}", target.getUniqueId(), type);
-                done.complete(DisguiseResult.ok());
-            } catch (Exception ex) {
-                LOG.error("Failed entity mob disguise (API) for {}", target.getUniqueId(), ex);
-                done.complete(DisguiseResult.failure(Component.text("Could not apply mob disguise to that entity.", NamedTextColor.RED)));
-            }
-        });
-        return done;
+        if (!target.isValid()) {
+            return DisguiseResult.failure(Component.text("That entity is no longer valid.", NamedTextColor.RED));
+        }
+        try {
+            mobDisguise.attach(target, type, opts);
+            persistLivingMob(target, type, opts);
+            LOG.info("Applied entity mob disguise for {} ({}) as {}", target.getUniqueId(), target.getType(), type);
+            return DisguiseResult.ok();
+        } catch (Exception ex) {
+            LOG.error("Failed entity mob disguise for {}", target.getUniqueId(), ex);
+            return DisguiseResult.failure(Component.text("Could not apply mob disguise to that entity.", NamedTextColor.RED));
+        }
+    }
+
+    private static DisguiseResult unsupportedMobType() {
+        return DisguiseResult.failure(Component.text(
+            "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped).",
+            NamedTextColor.RED
+        ));
     }
 
     public DisguiseResult undisguiseLivingMob(LivingEntity target) {
@@ -504,20 +330,6 @@ public final class DisguiseService {
         }
         PlayerLookBackup captured = appearance.capture(target);
         originalsByPlayer.put(target.getUniqueId(), captured);
-    }
-
-    private boolean rateAllowed(UUID initiator) {
-        long limit = syncTasks.rateLimitMillis();
-        if (limit <= 0) {
-            return true;
-        }
-        long now = System.currentTimeMillis();
-        Long prev = lastActionByInitiator.get(initiator);
-        if (prev != null && now - prev < limit) {
-            return false;
-        }
-        lastActionByInitiator.put(initiator, now);
-        return true;
     }
 
     private enum DisguiseSwitchMode {

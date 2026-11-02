@@ -18,9 +18,4 @@ public final class PaperSyncTaskRunner implements SyncTaskRunner {
     public void runSync(Runnable task) {
         plugin.getServer().getScheduler().runTask(plugin, task);
     }
-
-    @Override
-    public long rateLimitMillis() {
-        return plugin.getConfig().getLong("rate-limit-millis", 1000L);
-    }
 }

@@ -3,6 +3,7 @@ package ch.eneas.flipsdisguises.listener;
 import ch.eneas.PluginMain;
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
+import ch.eneas.flipsdisguises.command.CommandRateLimiter;
 import ch.eneas.flipsdisguises.disguise.application.DisguiseService;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import com.destroystokyo.paper.event.entity.EntityAddToWorldEvent;
@@ -31,12 +32,19 @@ public final class DisguiseLifecycleListener implements Listener {
     private final PluginMain plugin;
     private final DisguiseService disguiseService;
     private final MobDisguisePort mobDisguise;
+    private final CommandRateLimiter rateLimiter;
 
     @Inject
-    public DisguiseLifecycleListener(PluginMain plugin, DisguiseService disguiseService, MobDisguisePort mobDisguise) {
+    public DisguiseLifecycleListener(
+        PluginMain plugin,
+        DisguiseService disguiseService,
+        MobDisguisePort mobDisguise,
+        CommandRateLimiter rateLimiter
+    ) {
         this.plugin = plugin;
         this.disguiseService = disguiseService;
         this.mobDisguise = mobDisguise;
+        this.rateLimiter = rateLimiter;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -90,6 +98,8 @@ public final class DisguiseLifecycleListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onQuit(PlayerQuitEvent event) {
-        disguiseService.forget(event.getPlayer().getUniqueId());
+        UUID id = event.getPlayer().getUniqueId();
+        disguiseService.forget(id);
+        rateLimiter.forget(id);
     }
 }
