@@ -88,7 +88,7 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                if (!allowed(sender)) {
+                if (isBlocked(sender)) {
                     return;
                 }
                 MobDisguiseOptions opts = args.getUnchecked("mobFlags");
@@ -139,7 +139,7 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                if (!allowed(sender)) {
+                if (isBlocked(sender)) {
                     return;
                 }
                 int ok = 0;
@@ -196,7 +196,7 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                if (!allowed(sender)) {
+                if (isBlocked(sender)) {
                     return;
                 }
                 if (living.isEmpty()) {
@@ -273,7 +273,7 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                if (!allowed(sender)) {
+                if (isBlocked(sender)) {
                     return;
                 }
                 disguiseService.disguiseAsPlayer(target, skinName, options).thenAccept(result ->
@@ -351,23 +351,31 @@ public final class DisguiseCommands implements CommandRegister {
                     ));
                     return;
                 }
-                reply(sender, disguiseService.undisguise(target));
+                replyRemove(sender, disguiseService.undisguise(target));
             });
     }
 
-    private boolean allowed(CommandSender sender) {
+    private boolean isBlocked(CommandSender sender) {
         if (rateLimiter.tryAcquire(sender)) {
-            return true;
+            return false;
         }
         sender.sendMessage(Component.text("Slow down.", NamedTextColor.RED));
-        return false;
+        return true;
     }
 
     private static void reply(CommandSender sender, DisguiseResult result) {
-        if (result instanceof DisguiseResult.Failure f) {
-            sender.sendMessage(f.message());
+        if (result instanceof DisguiseResult.Failure(String message)) {
+            sender.sendMessage(Component.text(message, NamedTextColor.RED));
         } else {
             sender.sendMessage(Component.text("Disguise applied.", NamedTextColor.GREEN));
+        }
+    }
+
+    private static void replyRemove(CommandSender sender, DisguiseResult result) {
+        if (result instanceof DisguiseResult.Failure(String message)) {
+            sender.sendMessage(Component.text(message, NamedTextColor.GRAY));
+        } else {
+            sender.sendMessage(Component.text("Disguise removed.", NamedTextColor.GREEN));
         }
     }
 }

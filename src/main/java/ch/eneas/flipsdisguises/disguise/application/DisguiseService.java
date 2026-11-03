@@ -2,19 +2,13 @@ package ch.eneas.flipsdisguises.disguise.application;
 
 import ch.eneas.flips.loader.api.Inject;
 import ch.eneas.flips.loader.api.Injectable;
-import ch.eneas.flipsdisguises.disguise.domain.MobDisguiseOptions;
-import ch.eneas.flipsdisguises.disguise.domain.PlayerDisguiseOptions;
-import ch.eneas.flipsdisguises.disguise.domain.PlayerLookBackup;
-import ch.eneas.flipsdisguises.disguise.domain.SkinSnapshot;
-import ch.eneas.flipsdisguises.disguise.domain.StoredDisguise;
-import ch.eneas.flipsdisguises.disguise.port.DisguiseStore;
 import ch.eneas.flipsdisguises.disguise.adapter.packet.MobDisguiseEntityMapping;
+import ch.eneas.flipsdisguises.disguise.domain.*;
+import ch.eneas.flipsdisguises.disguise.port.DisguiseStore;
 import ch.eneas.flipsdisguises.disguise.port.MobDisguisePort;
 import ch.eneas.flipsdisguises.disguise.port.PlayerAppearancePort;
 import ch.eneas.flipsdisguises.disguise.port.SkinCatalog;
 import ch.eneas.flipsdisguises.plugin.SyncTaskRunner;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
@@ -113,7 +107,7 @@ public final class DisguiseService {
             activeByPlayer.put(id, active);
             applyLabels(player, active);
             if (active.kind() == StoredDisguise.Kind.MOB) {
-                mobDisguise.attach((LivingEntity) player, active.mobType(), active.options());
+                mobDisguise.attach(player, active.mobType(), active.options());
             }
             LOG.info("Restored saved {} disguise for {}", active.kind(), id);
         } catch (Exception ex) {
@@ -176,12 +170,12 @@ public final class DisguiseService {
     private DisguiseResult undisguisePlayer(Player target) {
         PlayerLookBackup original = originalsByPlayer.remove(target.getUniqueId());
         if (original == null) {
-            return DisguiseResult.failure(Component.text("Nothing to restore.", NamedTextColor.GRAY));
+            return DisguiseResult.failure("Nothing to restore.");
         }
         activeByPlayer.remove(target.getUniqueId());
         store.clear(target);
         if (mobDisguise.isMobDisguised(target.getUniqueId())) {
-            mobDisguise.detach((LivingEntity) target);
+            mobDisguise.detach(target);
         }
         mobDisguise.clearSpoofedPlayerName(target.getUniqueId());
         mobDisguise.clearPlayerAppearance(target.getUniqueId());
@@ -210,7 +204,7 @@ public final class DisguiseService {
         String owner = skinOwner.trim();
         if (owner.isEmpty()) {
             return CompletableFuture.completedFuture(
-                DisguiseResult.failure(Component.text("Player name required.", NamedTextColor.RED))
+                DisguiseResult.failure("Player name required.")
             );
         }
         PlayerDisguiseOptions opts = options == null ? PlayerDisguiseOptions.DEFAULT : options;
@@ -219,7 +213,7 @@ public final class DisguiseService {
             : scheduleApplyPlayerModel(target, skin, owner, opts)
         ).exceptionally(ex -> {
             LOG.error("Failed to resolve skin profile '{}' for {}", owner, target.getUniqueId(), ex);
-            return DisguiseResult.failure(Component.text("Could not resolve that player.", NamedTextColor.RED));
+            return DisguiseResult.failure("Could not resolve that player.");
         });
     }
 
@@ -236,7 +230,7 @@ public final class DisguiseService {
 
     private DisguiseResult disguisePlayerAsMob(Player target, EntityType type, MobDisguiseOptions opts) {
         if (!target.isOnline()) {
-            return DisguiseResult.failure(Component.text("Target is not online.", NamedTextColor.RED));
+            return DisguiseResult.failure("Target is not online.");
         }
         if (!MobDisguiseEntityMapping.isSupported(type)) {
             return unsupportedMobType();
@@ -248,19 +242,19 @@ public final class DisguiseService {
             } else {
                 appearance.applyMobLabels(target, type);
             }
-            mobDisguise.attach((LivingEntity) target, type, opts);
+            mobDisguise.attach(target, type, opts);
             rememberMob(target, type, opts);
             LOG.info("Applied mob disguise for {} as {}", target.getUniqueId(), type);
             return DisguiseResult.ok();
         } catch (Exception ex) {
             LOG.error("Failed mob disguise for {}", target.getUniqueId(), ex);
-            return DisguiseResult.failure(Component.text("Could not apply mob disguise.", NamedTextColor.RED));
+            return DisguiseResult.failure("Could not apply mob disguise.");
         }
     }
 
     private DisguiseResult disguiseNonPlayerAsMob(LivingEntity target, EntityType type, MobDisguiseOptions opts) {
         if (!target.isValid()) {
-            return DisguiseResult.failure(Component.text("That entity is no longer valid.", NamedTextColor.RED));
+            return DisguiseResult.failure("That entity is no longer valid.");
         }
         if (!MobDisguiseEntityMapping.isSupported(type)) {
             return unsupportedMobType();
@@ -272,20 +266,19 @@ public final class DisguiseService {
             return DisguiseResult.ok();
         } catch (Exception ex) {
             LOG.error("Failed entity mob disguise for {}", target.getUniqueId(), ex);
-            return DisguiseResult.failure(Component.text("Could not apply mob disguise to that entity.", NamedTextColor.RED));
+            return DisguiseResult.failure("Could not apply mob disguise to that entity.");
         }
     }
 
     private static DisguiseResult unsupportedMobType() {
-        return DisguiseResult.failure(Component.text(
-            "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped).",
-            NamedTextColor.RED
-        ));
+        return DisguiseResult.failure(
+            "That entity type cannot be used as a mob disguise (non-living, blocked, or unmapped)."
+        );
     }
 
     private DisguiseResult undisguiseNonPlayer(LivingEntity target) {
         if (!mobDisguise.isMobDisguised(target.getUniqueId())) {
-            return DisguiseResult.failure(Component.text("That entity has no mob disguise.", NamedTextColor.GRAY));
+            return DisguiseResult.failure("That entity has no mob disguise.");
         }
         mobDisguise.detach(target);
         store.clear(target);
@@ -336,7 +329,7 @@ public final class DisguiseService {
         syncTasks.runSync(() -> {
             try {
                 if (!target.isValid()) {
-                    done.complete(DisguiseResult.failure(Component.text("That entity is no longer valid.", NamedTextColor.RED)));
+                    done.complete(DisguiseResult.failure("That entity is no longer valid."));
                     return;
                 }
                 String shown = shownNameOf(skin, requestedName);
@@ -350,7 +343,7 @@ public final class DisguiseService {
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
                 LOG.error("Failed player-model disguise for entity {}", target.getUniqueId(), ex);
-                done.complete(DisguiseResult.failure(Component.text("Could not apply disguise to that entity.", NamedTextColor.RED)));
+                done.complete(DisguiseResult.failure("Could not apply disguise to that entity."));
             }
         });
         return done;
@@ -377,7 +370,7 @@ public final class DisguiseService {
         syncTasks.runSync(() -> {
             try {
                 if (!target.isOnline()) {
-                    done.complete(DisguiseResult.failure(Component.text("Target went offline.", NamedTextColor.RED)));
+                    done.complete(DisguiseResult.failure("Target went offline."));
                     return;
                 }
                 prepareSubjectForNewDisguise(target, DisguiseSwitchMode.TO_PLAYER);
@@ -395,7 +388,7 @@ public final class DisguiseService {
                 done.complete(DisguiseResult.ok());
             } catch (Exception ex) {
                 LOG.error("Failed applying disguise for {}", target.getUniqueId(), ex);
-                done.complete(DisguiseResult.failure(Component.text("Could not apply disguise.", NamedTextColor.RED)));
+                done.complete(DisguiseResult.failure("Could not apply disguise."));
             }
         });
         return done;
@@ -406,9 +399,9 @@ public final class DisguiseService {
         mobDisguise.clearPlayerAppearance(target.getUniqueId());
         boolean wasMob = mobDisguise.isMobDisguised(target.getUniqueId());
         if (wasMob && mode == DisguiseSwitchMode.TO_MOB) {
-            mobDisguise.detachDecoyOnly((LivingEntity) target);
+            mobDisguise.detachDecoyOnly(target);
         } else if (wasMob && mode == DisguiseSwitchMode.TO_PLAYER) {
-            mobDisguise.detach((LivingEntity) target);
+            mobDisguise.detach(target);
         }
 
         PlayerLookBackup existing = originalsByPlayer.get(target.getUniqueId());
