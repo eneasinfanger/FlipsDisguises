@@ -22,6 +22,7 @@ public class PluginMain extends JavaPlugin {
         try {
             var api = SpigotPacketEventsBuilder.build(this);
             PacketEvents.setAPI(api);
+            api.getSettings().checkForUpdates(false);
             api.load();
             api.init();
         } catch (Exception ex) {
