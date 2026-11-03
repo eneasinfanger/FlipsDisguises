@@ -112,7 +112,7 @@ and depend on it as `provided`, since the server already has the plugin:
     <dependency>
         <groupId>com.github.eneasinfanger</groupId>
         <artifactId>FlipsDisguises</artifactId>
-        <version>1.0.1</version>
+        <version>${FlipsDisguises.version}</version>
         <scope>provided</scope>
     </dependency>
 </dependencies>
@@ -122,10 +122,10 @@ Gradle:
 
 ```kotlin
 repositories { maven("https://jitpack.io") }
-dependencies { compileOnly("com.github.eneasinfanger:FlipsDisguises:1.0.1") }
+dependencies { compileOnly("com.github.eneasinfanger:FlipsDisguises:${flipsDisguisesVersion}") }
 ```
 
-Replace `1.0.1` with the [latest release tag](https://github.com/eneasinfanger/FlipsDisguises/releases).
+Always use the version with the [latest release tag](https://github.com/eneasinfanger/FlipsDisguises/releases).
 
 Make sure it loads before your plugin, in your `plugin.yml`:
 
